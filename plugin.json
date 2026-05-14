@@ -1,0 +1,49 @@
+{
+  "name": "Agent",
+  "author": "TCOTC",
+  "url": "https://github.com/TCOTC/Agent",
+  "version": "0.1.0",
+  "minAppVersion": "3.6.4",
+  "backends": [
+    "windows",
+    "linux",
+    "darwin",
+    "ios",
+    "android",
+    "harmony",
+    "docker",
+    "all"
+  ],
+  "frontends": [
+    "desktop",
+    "mobile",
+    "browser-desktop",
+    "browser-mobile",
+    "desktop-window",
+    "all"
+  ],
+  "disabledInPublish": false,
+  "displayName": {
+    "default": "Agent",
+    "zh_CN": "Agent"
+  },
+  "description": {
+    "default": "SiYuan Agent plugin (based on official plugin sample)",
+    "zh_CN": "思源笔记 Agent 插件（基于官方插件示例）"
+  },
+  "readme": {
+    "default": "README.md",
+    "zh_CN": "README_zh_CN.md"
+  },
+  "funding": {
+    "openCollective": "",
+    "patreon": "",
+    "github": "",
+    "custom": []
+  },
+  "keywords": [
+    "Agent",
+    "AI",
+    "思源"
+  ]
+}

@@ -1,0 +1,7 @@
+packages:
+  - "."
+
+allowBuilds:
+  "@parcel/watcher": false
+  dprint: true
+  esbuild: false
