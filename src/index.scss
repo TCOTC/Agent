@@ -1,22 +1,100 @@
-.plugin-agent {
-  &__custom-tab {
-    background-color: var(--b3-theme-background);
-    height: 100%;
-    width: 100%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+.plugin-agent-dock-wrap {
+  min-height: 0;
+}
+
+.plugin-agent-dock {
+  height: 100%;
+  min-height: 0;
+  padding: 8px;
+  box-sizing: border-box;
+  gap: 8px;
+
+  &__toolbar {
+    gap: 6px;
+    flex-wrap: wrap;
   }
 
-  &__custom-dock {
-    display: flex;
-    justify-content: center;
-    align-items: center;
+  &__workset {
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 4.5em;
+    overflow: auto;
   }
 
-  &__time {
-    background: var(--b3-card-info-background);
+  &__audit {
+    font-size: 12px;
+
+    summary {
+      cursor: pointer;
+      user-select: none;
+    }
+  }
+
+  &__audit-pre {
+    margin: 4px 0 0;
+    max-height: 120px;
+    overflow: auto;
+    font-size: 11px;
+    white-space: pre-wrap;
+    background: var(--b3-theme-surface);
     border-radius: 4px;
-    padding: 2px 8px;
+    padding: 6px;
+  }
+
+  &__messages {
+    min-height: 80px;
+    overflow: auto;
+    border: 1px solid var(--b3-border-color);
+    border-radius: 4px;
+    padding: 6px;
+    background: var(--b3-theme-background);
+  }
+
+  &__input-row {
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  &__send-col {
+    gap: 4px;
+    justify-content: flex-start;
+  }
+}
+
+.plugin-agent-msg {
+  margin-bottom: 8px;
+  font-size: 12px;
+
+  &__role {
+    font-weight: 600;
+    opacity: 0.8;
+    margin-bottom: 2px;
+  }
+
+  pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--b3-font-family-code);
+    font-size: 12px;
+  }
+
+  &--user pre {
+    color: var(--b3-theme-on-surface);
+  }
+
+  &--assistant pre {
+    color: var(--b3-theme-on-background);
+  }
+
+  &__tools {
+    margin-top: 4px;
+    opacity: 0.85;
+    font-size: 11px;
+  }
+
+  &--tool pre {
+    font-size: 11px;
+    opacity: 0.9;
   }
 }

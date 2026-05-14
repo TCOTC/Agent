@@ -28,8 +28,8 @@
     "zh_CN": "Agent"
   },
   "description": {
-    "default": "SiYuan Agent plugin (based on official plugin sample)",
-    "zh_CN": "思源笔记 Agent 插件（基于官方插件示例）"
+    "default": "SiYuan note assistant: in-process OpenAI-compatible agent with workset and tools",
+    "zh_CN": "思源笔记助手：进程内 OpenAI 兼容 Agent，工作集与内置工具"
   },
   "readme": {
     "default": "README.md",
