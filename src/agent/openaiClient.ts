@@ -7,6 +7,30 @@ import type {
     OpenAICompatibleConfig,
 } from "./types";
 
+/** 临时：每次流式 delta 回调后休眠（毫秒），便于观察 UI；设为 0 关闭 */
+const STREAM_DELTA_DEBUG_THROTTLE_MS = 120;
+
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
+    if (ms <= 0) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+        if (signal.aborted) {
+            reject(new Error("aborted"));
+            return;
+        }
+        const t = setTimeout(() => {
+            signal.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+        const onAbort = () => {
+            clearTimeout(t);
+            reject(new Error("aborted"));
+        };
+        signal.addEventListener("abort", onAbort, {once: true});
+    });
+}
+
 export interface ChatCompletionResult {
     message: {
         role: string;
@@ -112,7 +136,7 @@ function applyStreamDelta(a: StreamAccum, delta: Record<string, unknown>): void 
 async function readChatCompletionSse(
     res: Response,
     signal: AbortSignal,
-    onEvent: (obj: Record<string, unknown>) => void,
+    onEvent: (obj: Record<string, unknown>) => void | Promise<void>,
 ): Promise<void> {
     const body = res.body;
     if (!body) {
@@ -136,16 +160,19 @@ async function readChatCompletionSse(
             while ((nl = carry.indexOf("\n")) >= 0) {
                 const line = carry.slice(0, nl);
                 carry = carry.slice(nl + 1);
-                parseSseLine(line, onEvent);
+                await parseSseLine(line, onEvent);
             }
         }
-        parseSseLine(carry, onEvent);
+        await parseSseLine(carry, onEvent);
     } finally {
         reader.releaseLock();
     }
 }
 
-function parseSseLine(line: string, onEvent: (obj: Record<string, unknown>) => void): void {
+async function parseSseLine(
+    line: string,
+    onEvent: (obj: Record<string, unknown>) => void | Promise<void>,
+): Promise<void> {
     const trimmed = line.replace(/\r$/, "").trim();
     if (!trimmed || trimmed.startsWith(":")) {
         return;
@@ -164,7 +191,7 @@ function parseSseLine(line: string, onEvent: (obj: Record<string, unknown>) => v
         return;
     }
     if (obj && typeof obj === "object") {
-        onEvent(obj as Record<string, unknown>);
+        await onEvent(obj as Record<string, unknown>);
     }
 }
 
@@ -250,7 +277,7 @@ export async function openAIChatCompletion(
     };
     let usage: Record<string, unknown> | undefined;
 
-    await readChatCompletionSse(res, signal, (obj) => {
+    await readChatCompletionSse(res, signal, async (obj) => {
         const u = obj.usage;
         if (u && typeof u === "object") {
             usage = u as Record<string, unknown>;
@@ -270,6 +297,9 @@ export async function openAIChatCompletion(
         }
         applyStreamDelta(accum, delta as Record<string, unknown>);
         onStreamDelta?.(snapshotFromAccum(accum));
+        if (onStreamDelta && STREAM_DELTA_DEBUG_THROTTLE_MS > 0) {
+            await sleepAbortable(STREAM_DELTA_DEBUG_THROTTLE_MS, signal);
+        }
     });
 
     const message = accumToMessage(accum);
