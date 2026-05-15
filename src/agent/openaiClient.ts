@@ -23,6 +23,151 @@ export interface ChatCompletionResult {
     usage?: Record<string, unknown>;
 }
 
+/** 流式过程中供 UI 展示的增量快照（与最终 message 结构对齐） */
+export interface ChatCompletionStreamSnapshot {
+    content: string;
+    reasoning_content?: string | null;
+    tool_calls?: ChatCompletionResult["message"]["tool_calls"];
+}
+
+interface StreamAccum {
+    content: string;
+    reasoning: string;
+    /** 按 OpenAI stream 的 index 合并分片 */
+    toolParts: Map<number, {id: string; name: string; arguments: string;}>;
+    finishReason?: string;
+}
+
+function snapshotFromAccum(a: StreamAccum): ChatCompletionStreamSnapshot {
+    const tool_calls = a.toolParts.size ?
+        [...a.toolParts.keys()].sort((x, y) => x - y).map((idx) => {
+            const p = a.toolParts.get(idx)!;
+            return {
+                id: p.id,
+                type: "function" as const,
+                function: {name: p.name, arguments: p.arguments},
+            };
+        }) :
+        undefined;
+    const snap: ChatCompletionStreamSnapshot = {content: a.content};
+    if (a.reasoning !== "") {
+        snap.reasoning_content = a.reasoning;
+    }
+    if (tool_calls?.length) {
+        snap.tool_calls = tool_calls;
+    }
+    return snap;
+}
+
+function accumToMessage(a: StreamAccum): ChatCompletionResult["message"] {
+    const snap = snapshotFromAccum(a);
+    return {
+        role: "assistant",
+        content: snap.content || null,
+        reasoning_content: snap.reasoning_content,
+        tool_calls: snap.tool_calls,
+    };
+}
+
+function applyStreamDelta(a: StreamAccum, delta: Record<string, unknown>): void {
+    const content = delta.content;
+    if (typeof content === "string" && content.length) {
+        a.content += content;
+    }
+    const rc = delta.reasoning_content;
+    if (typeof rc === "string" && rc.length) {
+        a.reasoning += rc;
+    }
+    const tcs = delta.tool_calls;
+    if (!Array.isArray(tcs)) {
+        return;
+    }
+    for (const raw of tcs) {
+        if (!raw || typeof raw !== "object") {
+            continue;
+        }
+        const tc = raw as Record<string, unknown>;
+        const index = typeof tc.index === "number" ? tc.index : 0;
+        let part = a.toolParts.get(index);
+        if (!part) {
+            part = {id: "", name: "", arguments: ""};
+            a.toolParts.set(index, part);
+        }
+        if (typeof tc.id === "string" && tc.id) {
+            part.id = tc.id;
+        }
+        const fn = tc.function;
+        if (fn && typeof fn === "object") {
+            const f = fn as Record<string, unknown>;
+            if (typeof f.name === "string" && f.name) {
+                part.name = f.name;
+            }
+            if (typeof f.arguments === "string" && f.arguments) {
+                part.arguments += f.arguments;
+            }
+        }
+    }
+}
+
+async function readChatCompletionSse(
+    res: Response,
+    signal: AbortSignal,
+    onEvent: (obj: Record<string, unknown>) => void,
+): Promise<void> {
+    const body = res.body;
+    if (!body) {
+        throw new Error("no_response_body");
+    }
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let carry = "";
+    try {
+        for (;;) {
+            const {done, value} = await reader.read();
+            if (signal.aborted) {
+                await reader.cancel();
+                throw new Error("aborted");
+            }
+            if (done) {
+                break;
+            }
+            carry += decoder.decode(value, {stream: true});
+            let nl: number;
+            while ((nl = carry.indexOf("\n")) >= 0) {
+                const line = carry.slice(0, nl);
+                carry = carry.slice(nl + 1);
+                parseSseLine(line, onEvent);
+            }
+        }
+        parseSseLine(carry, onEvent);
+    } finally {
+        reader.releaseLock();
+    }
+}
+
+function parseSseLine(line: string, onEvent: (obj: Record<string, unknown>) => void): void {
+    const trimmed = line.replace(/\r$/, "").trim();
+    if (!trimmed || trimmed.startsWith(":")) {
+        return;
+    }
+    if (trimmed === "data: [DONE]") {
+        return;
+    }
+    if (!trimmed.startsWith("data: ")) {
+        return;
+    }
+    const jsonStr = trimmed.slice(6);
+    let obj: unknown;
+    try {
+        obj = JSON.parse(jsonStr) as unknown;
+    } catch {
+        return;
+    }
+    if (obj && typeof obj === "object") {
+        onEvent(obj as Record<string, unknown>);
+    }
+}
+
 function joinUrl(base: string, path: string): string {
     const b = base.replace(/\/+$/, "");
     const p = path.replace(/^\/+/, "");
@@ -73,6 +218,7 @@ export async function openAIChatCompletion(
     messages: ChatMessage[],
     allowSqlTool: boolean,
     signal: AbortSignal,
+    onStreamDelta?: (snapshot: ChatCompletionStreamSnapshot) => void,
 ): Promise<ChatCompletionResult> {
     const tools = toolsToOpenAIFormat(getBuiltinToolDefinitions(allowSqlTool));
     const url = joinUrl(cfg.baseUrl, "chat/completions");
@@ -82,6 +228,7 @@ export async function openAIChatCompletion(
         tools,
         tool_choice: "auto",
         temperature: 0.2,
+        stream: true,
     };
     const res = await fetch(url, {
         method: "POST",
@@ -96,20 +243,47 @@ export async function openAIChatCompletion(
         const t = await res.text();
         throw new Error(`HTTP ${res.status}: ${t.slice(0, 500)}`);
     }
-    const json = (await res.json()) as {
-        choices?: Array<{
-            finish_reason?: string;
-            message?: ChatCompletionResult["message"];
-        }>;
-        usage?: Record<string, unknown>;
+    const accum: StreamAccum = {
+        content: "",
+        reasoning: "",
+        toolParts: new Map(),
     };
-    const choice = json.choices?.[0];
-    if (!choice?.message) {
+    let usage: Record<string, unknown> | undefined;
+
+    await readChatCompletionSse(res, signal, (obj) => {
+        const u = obj.usage;
+        if (u && typeof u === "object") {
+            usage = u as Record<string, unknown>;
+        }
+        const choices = obj.choices;
+        if (!Array.isArray(choices) || choices.length === 0) {
+            return;
+        }
+        const ch0 = choices[0] as Record<string, unknown>;
+        const fr = ch0.finish_reason;
+        if (typeof fr === "string" && fr) {
+            accum.finishReason = fr;
+        }
+        const delta = ch0.delta;
+        if (!delta || typeof delta !== "object") {
+            return;
+        }
+        applyStreamDelta(accum, delta as Record<string, unknown>);
+        onStreamDelta?.(snapshotFromAccum(accum));
+    });
+
+    const message = accumToMessage(accum);
+    const hasTools = Boolean(message.tool_calls?.length);
+    const hasText = Boolean(
+        (message.content && message.content.length > 0) ||
+            (message.reasoning_content && message.reasoning_content.length > 0),
+    );
+    if (!hasTools && !hasText) {
         throw new Error("invalid_openai_response");
     }
     return {
-        message: choice.message,
-        finish_reason: choice.finish_reason,
-        usage: json.usage,
+        message,
+        finish_reason: accum.finishReason,
+        usage,
     };
 }

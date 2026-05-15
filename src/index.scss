@@ -93,6 +93,14 @@
     font-size: 11px;
   }
 
+  &__reasoning {
+    margin-bottom: 6px;
+    opacity: 0.75;
+    font-size: 11px;
+    border-left: 2px solid var(--b3-border-color);
+    padding-left: 8px;
+  }
+
   &--tool pre {
     font-size: 11px;
     opacity: 0.9;

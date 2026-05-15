@@ -92,6 +92,17 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
     let workset = {...defaultWorkset};
     const chatMessages: ChatMessage[] = [];
     let abortCtl: AbortController | null = null;
+    let streamRenderRaf = 0;
+
+    const scheduleStreamRender = () => {
+        if (streamRenderRaf) {
+            return;
+        }
+        streamRenderRaf = requestAnimationFrame(() => {
+            streamRenderRaf = 0;
+            renderMessages();
+        });
+    };
 
     const auditLines: string[] = [];
     const pushAudit = (e: AuditEvent) => {
@@ -138,11 +149,14 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
                     }</pre></div>`,
                 );
             } else if (m.role === "assistant") {
+                const reasoning = m.reasoning_content ?
+                    `<pre class="plugin-agent-msg__reasoning">${esc(String(m.reasoning_content))}</pre>` :
+                    "";
                 const tools = m.tool_calls?.map((t) => `${t.function.name}(${t.function.arguments})`).join("\n");
                 parts.push(
-                    `<div class="plugin-agent-msg plugin-agent-msg--assistant"><div class="plugin-agent-msg__role">Assistant</div><pre>${
-                        esc(m.content ?? "")
-                    }</pre>${
+                    `<div class="plugin-agent-msg plugin-agent-msg--assistant"><div class="plugin-agent-msg__role">Assistant</div>${
+                        reasoning
+                    }<pre>${esc(m.content ?? "")}</pre>${
                         tools ?
                             `<pre class="plugin-agent-msg__tools">${esc(tools)}</pre>` :
                             ""
@@ -229,6 +243,7 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
                 userText: text,
                 signal: abortCtl.signal,
                 onAudit: pushAudit,
+                onStreamDelta: scheduleStreamRender,
             });
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
@@ -237,6 +252,10 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
                 pushAudit({kind: "tool_blocked", name: "agent", reason: msg});
             }
         } finally {
+            if (streamRenderRaf) {
+                cancelAnimationFrame(streamRenderRaf);
+                streamRenderRaf = 0;
+            }
             btnSend.disabled = false;
             btnStop.disabled = true;
             abortCtl = null;

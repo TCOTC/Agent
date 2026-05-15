@@ -1,7 +1,7 @@
 import {runBuiltinTool} from "./builtinTools";
 import {confirmPromise} from "./confirmUtil";
 import {createFetchSyncKernelExecutor} from "./kernelExecutor";
-import {openAIChatCompletion} from "./openaiClient";
+import {openAIChatCompletion, type ChatCompletionStreamSnapshot} from "./openaiClient";
 import type {
     AuditEvent,
     ChatMessage,
@@ -19,6 +19,8 @@ export interface RunAgentLoopParams {
     userText: string;
     signal: AbortSignal;
     onAudit: (e: AuditEvent) => void;
+    /** 模型流式增量输出时调用（由 UI 侧节流渲染） */
+    onStreamDelta?: () => void;
     systemExtra?: string;
 }
 
@@ -54,39 +56,69 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<void> {
             messageCount: convo.length,
             toolCount: 0,
         });
-        const result = await openAIChatCompletion(p.llm, convo, p.allowSqlTool, p.signal);
+
+        const asst: ChatMessage = {role: "assistant", content: ""};
+        p.messages.push(asst);
+        convo.push(asst);
+
+        const applyStream = (snap: ChatCompletionStreamSnapshot) => {
+            asst.content = snap.content;
+            if (snap.reasoning_content !== undefined) {
+                asst.reasoning_content = snap.reasoning_content;
+            }
+            if (snap.tool_calls?.length) {
+                asst.tool_calls = snap.tool_calls;
+            } else {
+                delete asst.tool_calls;
+            }
+            p.onStreamDelta?.();
+        };
+
+        let result;
+        try {
+            result = await openAIChatCompletion(
+                p.llm,
+                convo,
+                p.allowSqlTool,
+                p.signal,
+                applyStream,
+            );
+        } catch (e) {
+            const noPayload =
+                (!asst.content || asst.content === "") &&
+                !asst.tool_calls?.length &&
+                (asst.reasoning_content == null || asst.reasoning_content === "");
+            if (noPayload && p.messages[p.messages.length - 1] === asst) {
+                p.messages.pop();
+                if (convo[convo.length - 1] === asst) {
+                    convo.pop();
+                }
+            }
+            throw e;
+        }
+
+        const msg = result.message;
+        asst.content = msg.content ?? "";
+        if (msg.reasoning_content !== undefined) {
+            asst.reasoning_content = msg.reasoning_content;
+        }
+        if (msg.tool_calls?.length) {
+            asst.tool_calls = msg.tool_calls;
+        } else {
+            delete asst.tool_calls;
+        }
+
         p.onAudit({
             kind: "llm_response",
             durationMs: Math.round(performance.now() - tReq),
-            finish_reason: result.finish_reason,
+            finishReason: result.finish_reason,
             usage: result.usage,
         });
 
-        const msg = result.message;
-        const toolCalls = msg.tool_calls;
-        const reasoningContent = msg.reasoning_content;
+        const toolCalls = asst.tool_calls;
         if (!toolCalls?.length) {
-            const done: ChatMessage = {
-                role: "assistant",
-                content: msg.content ?? "",
-            };
-            if (reasoningContent !== undefined) {
-                done.reasoning_content = reasoningContent;
-            }
-            p.messages.push(done);
             return;
         }
-
-        const assistantMsg: ChatMessage = {
-            role: "assistant",
-            content: msg.content,
-            tool_calls: toolCalls,
-        };
-        if (reasoningContent !== undefined) {
-            assistantMsg.reasoning_content = reasoningContent;
-        }
-        convo.push(assistantMsg);
-        p.messages.push(assistantMsg);
 
         const ctxExec = {
             kernel,
