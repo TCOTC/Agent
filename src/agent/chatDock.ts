@@ -18,6 +18,7 @@ import {
     getLuteOrNull,
     getStreamingAssistantMdParts,
 } from "./streamMdRender";
+import {postRenderAgentMarkdownFragment} from "./typographyPostRender";
 import type {
     AuditEvent,
     ChatMessage,
@@ -276,6 +277,7 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
         if (tailEl.innerHTML !== tailHtml) {
             tailEl.innerHTML = tailHtml;
         }
+        postRenderAgentMarkdownFragment(host);
     }
 
     function patchAssistantRow(row: HTMLElement, m: ChatMessage, lute: ReturnType<typeof getLuteOrNull>): void {

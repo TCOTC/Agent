@@ -3,8 +3,11 @@
  *
  * 说明：内核导出预览使用 `ProtylePreview(tree, …)`，但在浏览器 GopherJS 中若将 `Md2BlockDOMTree`
  * 返回的 AST 再传入 `ProtylePreview`，会在 `$externalize` 时因语法树图结构导致栈溢出。
- * 因此此处采用与思源多处一致的纯字符串链路：`Md2BlockDOM` → `BlockDOM2HTML`，语义上接近
- * 块 DOM 经 Markdown 再输出为 HTML 的预览效果，且不经过 `protyle-wysiwyg` DOM。
+ * 因此此处采用纯字符串链路：优先 `MarkdownStr`（一次 `Md2HTML`），避免 `Md2BlockDOM` → `BlockDOM2HTML`
+ * 往返在行级公式 `$…$` 与 `^` 上标同时开启时的解析歧义；无 `MarkdownStr` 时回退 `Md2BlockDOM` → `BlockDOM2HTML`。
+ * 插入 DOM 后由
+ * `markdownDomUpgrade`（图表 `div.language-*`、代码 `pre.code-block`、任务列表 `protyle-task` 等）与
+ * `typographyPostRender` 中的 `agentProcessRender` / `ProtyleMethod.highlightRender` 对齐导出预览管线。
  *
  * 流式优化：当文档根下已出现至少 2 个第一层块时，说明第一个块已完整，将其 Markdown 封存并
  * 只对新尾部反复解析，避免已稳定块重复走 Lute。思考结束后一旦正文开始输出，可对推理文本调用
@@ -160,7 +163,19 @@ function configureFallbackLute(engine: LuteEngine): void {
         engine.SetGFMStrikethrough1?.(false);
         engine.SetGFMStrikethrough?.(Boolean(md.inlineStrikethrough));
         engine.SetMark?.(Boolean(md.inlineMark));
+    } else {
+        engine.SetInlineMath?.(true);
     }
+}
+
+/** 与当前编辑器块级预览选项 `preview.markdown.sanitize` 对齐，用于在助手渲染后恢复 Lute 状态 */
+function getEditorPreviewMarkdownSanitize(): boolean {
+    const ed = getAllEditor()[0];
+    const pm = ed?.protyle?.options?.preview?.markdown as {sanitize?: boolean} | undefined;
+    if (pm && typeof pm.sanitize === "boolean") {
+        return pm.sanitize;
+    }
+    return true;
 }
 
 function getLuteEngine(): LuteEngine | null {
@@ -190,17 +205,29 @@ export function markdownToProtylePreviewHtml(lute: LuteEngine, md: string): stri
     const prevMarkNetImg = markCfg !== undefined ? Boolean(markCfg) : true;
     lute.SetProtyleMarkNetImg?.(false);
 
-    let html: string;
-    if (typeof lute.BlockDOM2HTML === "function") {
-        const blockDom = lute.Md2BlockDOM(md, false);
-        html = lute.BlockDOM2HTML(blockDom);
-    } else if (typeof lute.MarkdownStr === "function") {
-        html = lute.MarkdownStr("", md);
-    } else {
-        html = "";
-    }
+    const mdSnap = (window as unknown as {siyuan?: {config?: {editor?: {markdown?: {inlineMath?: boolean}}}}})
+        .siyuan?.config?.editor?.markdown;
+    const restoreInlineMath = mdSnap ? Boolean(mdSnap.inlineMath) : true;
+    const restoreSanitize = getEditorPreviewMarkdownSanitize();
 
-    lute.SetProtyleMarkNetImg?.(prevMarkNetImg);
+    let html: string;
+    try {
+        // 助手区与块级预览的 sanitize 可独立：此处临时关闭以便行内 HTML 生效，结束后恢复编辑器预览选项。
+        lute.SetSanitize?.(false);
+        lute.SetInlineMath?.(true);
+        if (typeof lute.MarkdownStr === "function") {
+            html = lute.MarkdownStr("", md);
+        } else if (typeof lute.BlockDOM2HTML === "function") {
+            const blockDom = lute.Md2BlockDOM(md, false);
+            html = lute.BlockDOM2HTML(blockDom);
+        } else {
+            html = "";
+        }
+    } finally {
+        lute.SetSanitize?.(restoreSanitize);
+        lute.SetInlineMath?.(restoreInlineMath);
+        lute.SetProtyleMarkNetImg?.(prevMarkNetImg);
+    }
     return html;
 }
 
