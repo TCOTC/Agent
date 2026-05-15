@@ -7,10 +7,10 @@ export const STORAGE_AGENT_SETTINGS = "agent-settings";
 export const STORAGE_AGENT_WORKSET = "agent-workset";
 
 export const defaultAgentSettings: AgentStoredSettings = {
-    baseUrl: "https://api.openai.com/v1",
+    baseUrl: "https://api.deepseek.com",
     apiKey: "",
-    model: "gpt-4o-mini",
-    allowSqlTool: false,
+    model: "deepseek-v4-flash",
+    allowSqlTool: true,
 };
 
 export const defaultWorkset: AgentStoredWorkset = {
