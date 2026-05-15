@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>本插件架构 — 思源 Agent 学习站</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar__title">思源 Agent 插件<br />开发者学习站</p>
+      <p class="sidebar__meta">面向集成 AI Agent 的入门与架构说明</p>
+      <button type="button" class="menu-toggle" data-menu-toggle>目录</button>
+      <div class="nav-wrap">
+        <div class="nav-section">站点</div>
+        <ul class="nav-list">
+          <li><a href="index.html">首页</a></li>
+          <li><a href="basics.html">AI 与 LLM 基础</a></li>
+          <li><a href="agent-paradigms.html">Agent 主流范式</a></li>
+          <li><a class="is-active" href="plugin-architecture.html">本插件架构</a></li>
+          <li><a href="source-tour.html">源码与函数导览</a></li>
+          <li><a href="tools-api.html">内置工具与内核 API</a></li>
+        </ul>
+      </div>
+    </aside>
+    <main>
+      <h1>本插件架构</h1>
+      <p class="lead">
+        从思源插件入口到模型与内核：分层理解「谁负责 UI」「谁负责循环」「谁负责调 HTTP」「谁负责权限」。
+      </p>
+
+      <h2>总览：四层结构</h2>
+      <ol>
+        <li><strong>插件壳（<code>src/index.ts</code>）</strong>：实现思源 <code>Plugin</code> 生命周期，注册 Dock、设置项，加载 / 保存持久化数据。</li>
+        <li><strong>Dock UI（<code>src/agent/chatDock.ts</code>）</strong>：拼接 DOM、处理按钮与输入、维护内存中的对话列表与工作集展示，触发 Agent 循环。</li>
+        <li><strong>Agent 循环（<code>src/agent/agentLoop.ts</code>）</strong>：组织消息数组、调用 LLM、消费 <code>tool_calls</code>、写审计事件；是「编排层」。</li>
+        <li><strong>工具与内核（<code>builtinTools.ts</code> + <code>kernelExecutor.ts</code>）</strong>：把模型意图翻译成思源内核 REST 调用，并做工作集校验与写确认。</li>
+      </ol>
+
+      <h2>数据流（一次用户发送）</h2>
+      <pre class="diagram"><code>用户点击「发送」
+  → chatDock.runSend 读取设置（API Key、baseUrl、model、allowSqlTool）
+  → runAgentLoop({ llm, worksetRootIds, messages, userText, signal, onAudit })
+       1. 追加 user 消息；构造 system + 历史 convo
+       2. 循环（无固定轮数上限；用户可通过 AbortSignal 中止）：
+            openAIChatCompletion → POST chat/completions（带 tools）
+            若无 tool_calls → 追加 assistant 文本 → return
+            若有 tool_calls → 追加 assistant（含 tool_calls）到 convo 与 messages
+            对每个 call：runBuiltinTool → kernel.post("/api/...")
+            每个结果以 role=tool 追加
+  → chatDock 刷新消息区与审计日志</code></pre>
+
+      <h2>工作集（workset）与安全边界</h2>
+      <p>
+        工作集是用户显式选中的<strong>文档根块 ID（rootID）列表</strong>，存于 <code>STORAGE_AGENT_WORKSET</code>。
+        只读工具在访问块前会通过 <code>ensureRootInWorkset</code> 校验该块所属文档根是否在工作集中；读文档则要求传入的
+        <code>id</code> 本身必须是工作集内的根 ID。这样即使模型「想」读别的文档，也会被工具层拒绝。
+      </p>
+
+      <h2>KernelExecutor 抽象</h2>
+      <p>
+        <code>KernelExecutor</code> 接口只暴露 <code>post(url, body)</code>，默认实现 <code>createFetchSyncKernelExecutor</code>
+        使用思源提供的 <code>fetchSyncPost</code>。未来若改为独立 Node 服务、MCP 或 WebSocket，只需替换实现并注入
+        <code>runAgentLoop({ kernel: ... })</code>，编排层可保持不变。
+      </p>
+
+      <h2>审计（Audit）与可观测性</h2>
+      <p>
+        <code>AuditEvent</code> 描述 LLM 请求 / 响应、工具调用与结果、用户消息预览等。<code>chatDock</code> 里
+        <code>pushAudit</code> 将其格式化为运行日志，便于排查「模型调了哪个工具、耗时多少、是否失败」。
+      </p>
+
+      <h2>设置项如何进入循环</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>设置项</th>
+            <th>存储键</th>
+            <th>消费位置</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>baseUrl、apiKey、model</td>
+            <td><code>agent-settings</code></td>
+            <td><code>chatDock</code> 发送前 <code>loadData</code> → 传入 <code>openAIChatCompletion</code></td>
+          </tr>
+          <tr>
+            <td>allowSqlTool</td>
+            <td>同上</td>
+            <td>控制是否向模型注册 <code>siyuan_sql_query</code>；运行时仍每次确认</td>
+          </tr>
+          <tr>
+            <td>工作集 rootIds</td>
+            <td><code>agent-workset</code></td>
+            <td><code>new Set(workset.rootIds)</code> 传入 <code>runAgentLoop</code> 与工具上下文</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>与思源核心的关系</h2>
+      <p>
+        插件运行在思源前端宿主环境，通过内核 HTTP API 访问笔记本体数据；LLM 调用则发往用户配置的公网或自建兼容端点。
+        因此安全模型是<strong>双端点</strong>：一端是「笔记数据」（受工作集 + 确认框约束），另一端是「模型供应商」（受 API Key 与用户协议约束）。
+      </p>
+
+      <footer class="site-footer">
+        <a href="agent-paradigms.html">← Agent 主流范式</a> · <a href="source-tour.html">源码与函数导览 →</a>
+      </footer>
+    </main>
+  </div>
+  <script src="js/nav.js"></script>
+</body>
+</html>

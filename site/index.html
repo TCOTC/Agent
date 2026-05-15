@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>思源 Agent 插件 — 开发者学习站</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar__title">思源 Agent 插件<br />开发者学习站</p>
+      <p class="sidebar__meta">面向集成 AI Agent 的入门与架构说明</p>
+      <button type="button" class="menu-toggle" data-menu-toggle>目录</button>
+      <div class="nav-wrap">
+        <div class="nav-section">站点</div>
+        <ul class="nav-list">
+          <li><a class="is-active" href="index.html">首页</a></li>
+          <li><a href="basics.html">AI 与 LLM 基础</a></li>
+          <li><a href="agent-paradigms.html">Agent 主流范式</a></li>
+          <li><a href="plugin-architecture.html">本插件架构</a></li>
+          <li><a href="source-tour.html">源码与函数导览</a></li>
+          <li><a href="tools-api.html">内置工具与内核 API</a></li>
+        </ul>
+      </div>
+    </aside>
+    <main>
+      <h1>思源 Agent 插件 — 开发者学习站</h1>
+      <p class="lead">
+        本站面向「希望把 AI Agent 集成进思源笔记」的开发者，用中文系统讲解大语言模型与 Agent 的基本概念、常见工程范式，
+        并对本仓库 demo 插件的目录结构、运行循环、工具层与思源内核交互方式做对照说明。阅读时可配合本地
+        <code>src/</code> 源码一起翻看。
+      </p>
+
+      <div class="callout">
+        <strong>如何使用本站：</strong>按左侧顺序从「基础」读到「工具」即可形成完整心智模型；若你更关心「这份 demo 在干什么」，
+        可直接跳到「本插件架构」与「源码导览」。
+      </div>
+
+      <h2>章节导航</h2>
+      <div class="toc-cards">
+        <a class="toc-card" href="basics.html">
+          <h3>AI 与 LLM 基础</h3>
+          <p>Token、上下文、推理与补全、多轮对话、工具调用（function calling）等名词在工程里代表什么。</p>
+        </a>
+        <a class="toc-card" href="agent-paradigms.html">
+          <h3>Agent 主流范式</h3>
+          <p>ReAct、规划—执行、多 Agent、MCP、RAG 等模式与本插件所选路线的关系。</p>
+        </a>
+        <a class="toc-card" href="plugin-architecture.html">
+          <h3>本插件架构</h3>
+          <p>Dock UI、工作集、Agent 循环、KernelExecutor、OpenAI 兼容 API 如何拼在一起。</p>
+        </a>
+        <a class="toc-card" href="source-tour.html">
+          <h3>源码与函数导览</h3>
+          <p>按文件列出职责表，并解释 <code>runAgentLoop</code>、<code>runBuiltinTool</code> 等关键函数参数与副作用。</p>
+        </a>
+        <a class="toc-card" href="tools-api.html">
+          <h3>内置工具与内核 API</h3>
+          <p>每个内置工具的名称、风险等级、调用的思源 HTTP API 与返回 JSON 形态。</p>
+        </a>
+      </div>
+
+      <h2>本 demo 插件一句话概括</h2>
+      <p>
+        在思源进程内，用浏览器 <code>fetch</code> 调用「OpenAI 兼容」的 <code>chat/completions</code> 接口，
+        把模型返回的 <code>tool_calls</code> 交给本地 TypeScript 执行；执行层通过 <code>fetchSyncPost</code>
+        访问思源内核 REST API，且所有写操作与可选 SQL 都经用户弹窗确认；可访问的文档范围由用户显式维护的「工作集」限定。
+      </p>
+
+      <footer class="site-footer">
+        文档生成于插件仓库 <code>site/</code> 目录，可直接用浏览器打开本 HTML 文件离线阅读。
+      </footer>
+    </main>
+  </div>
+  <script src="js/nav.js"></script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI 与 LLM 基础 — 思源 Agent 学习站</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar__title">思源 Agent 插件<br />开发者学习站</p>
+      <p class="sidebar__meta">面向集成 AI Agent 的入门与架构说明</p>
+      <button type="button" class="menu-toggle" data-menu-toggle>目录</button>
+      <div class="nav-wrap">
+        <div class="nav-section">站点</div>
+        <ul class="nav-list">
+          <li><a href="index.html">首页</a></li>
+          <li><a class="is-active" href="basics.html">AI 与 LLM 基础</a></li>
+          <li><a href="agent-paradigms.html">Agent 主流范式</a></li>
+          <li><a href="plugin-architecture.html">本插件架构</a></li>
+          <li><a href="source-tour.html">源码与函数导览</a></li>
+          <li><a href="tools-api.html">内置工具与内核 API</a></li>
+        </ul>
+      </div>
+    </aside>
+    <main>
+      <h1>AI 与 LLM 基础</h1>
+      <p class="lead">
+        这一节建立共同语言：当你在后端或插件里「调模型」时，实际在交换什么数据结构，以及「Agent」与「普通聊天」差在哪里。
+      </p>
+
+      <h2>大语言模型（LLM）是什么</h2>
+      <p>
+        大语言模型是一种根据「前文」预测「下一个词元（token）」的概率模型，通过海量文本训练后，能在对话、摘要、代码生成等任务上表现良好。
+        工程上你很少直接运行模型权重，而是调用<strong>推理服务</strong>（本地或云端），例如 OpenAI、Azure、DeepSeek、Ollama 等提供的 HTTP API。
+      </p>
+
+      <h2>Token 与上下文窗口</h2>
+      <p>
+        <strong>Token</strong> 是模型处理文本的最小单位，可能是半个汉字、一个英文词根或标点。计费和长度限制通常按 token 计算。
+        <strong>上下文窗口</strong> 是单次请求里模型能「看到」的最大 token 数，包括系统提示、历史消息、工具返回等。超出窗口需要截断、摘要或换用更长窗口的模型。
+      </p>
+
+      <h2>补全（completion）与聊天（chat）</h2>
+      <p>
+        早期接口是「给一段前缀，模型续写」；现代产品几乎统一用 <strong>Chat Completions</strong> 形态：消息列表里每条有
+        <code>role</code>（如 <code>system</code>、<code>user</code>、<code>assistant</code>、<code>tool</code>），模型学习在对话结构里生成下一条
+        <code>assistant</code> 消息。
+      </p>
+
+      <h2>系统提示（system prompt）</h2>
+      <p>
+        <code>system</code> 消息用于描述助手身份、安全规则、输出格式、工具使用约束等。本插件在
+        <code>agentLoop.ts</code> 里用 <code>buildSystemPrompt</code> 注入「仅能访问工作集」等规则，属于典型的系统提示工程。
+      </p>
+
+      <h2>工具调用（function / tool calling）</h2>
+      <p>
+        除了返回自然语言，模型还可以返回结构化的 <strong>tool_calls</strong>：每个调用包含工具名与 JSON 参数字符串。
+        客户端（你的插件）负责<strong>真正执行</strong>工具，把结果以 <code>role: "tool"</code> 的消息写回对话，再请求模型继续推理。
+        这一「模型提议 → 本地执行 → 结果写回」的闭环，就是本插件 <code>runAgentLoop</code> 的核心。
+      </p>
+
+      <h2>温度（temperature）与确定性</h2>
+      <p>
+        <code>temperature</code> 越高，采样越随机；越低则越接近「每次都选概率最高的续写」。本插件在
+        <code>openaiClient.ts</code> 里使用较低温度（0.2），偏向稳定、可重复的助手行为。
+      </p>
+
+      <h2>OpenAI 兼容 API</h2>
+      <p>
+        许多供应商实现与 OpenAI 相同 URL 与 JSON 字段的接口（例如 <code>/v1/chat/completions</code>），便于客户端共用一套请求代码。
+        本插件只依赖这一兼容层，因此可替换为任意兼容端点，只要支持 <code>tools</code> 与 <code>tool_calls</code> 语义即可。
+      </p>
+
+      <h2>流式输出（streaming）</h2>
+      <p>
+        SSE 或 chunked 响应可以边生成边显示，改善首字延迟。本 demo 为简化实现使用<strong>非流式</strong> JSON 一次返回；产品化时可改为
+        <code>stream: true</code> 并处理增量事件。
+      </p>
+
+      <h2>从「聊天」到「Agent」</h2>
+      <p>
+        若模型只输出文本，用户得到的是「建议」；若模型能循环调用工具并根据结果再决策，就具备「在环境里采取行动」的特征，工程上常称为
+        <strong>Agent 回路</strong>。下一章《Agent 主流范式》会展开不同回路形态；本插件实现的是其中最常见的一种：<strong>带工具的多轮聊天循环</strong>。
+      </p>
+
+      <footer class="site-footer">
+        <a href="index.html">← 返回首页</a> · <a href="agent-paradigms.html">Agent 主流范式 →</a>
+      </footer>
+    </main>
+  </div>
+  <script src="js/nav.js"></script>
+</body>
+</html>

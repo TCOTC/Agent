@@ -9,8 +9,6 @@ import type {
     OpenAICompatibleConfig,
 } from "./types";
 
-const MAX_TOOL_ROUNDS = 10;
-
 export interface RunAgentLoopParams {
     kernel?: KernelExecutor;
     llm: OpenAICompatibleConfig;
@@ -44,7 +42,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<void> {
     const systemContent = buildSystemPrompt(worksetList, p.systemExtra);
     const convo: ChatMessage[] = [{role: "system", content: systemContent}, ...p.messages];
 
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    // 无工具轮数上限；由用户在 UI 触发 Abort（传入的 signal）中止。
+    for (;;) {
         if (p.signal.aborted) {
             throw new Error("aborted");
         }
@@ -136,8 +135,4 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<void> {
             p.messages.push(toolMsg);
         }
     }
-    p.messages.push({
-        role: "assistant",
-        content: "已达到工具调用轮数上限，请精简任务或分步重试。",
-    });
 }

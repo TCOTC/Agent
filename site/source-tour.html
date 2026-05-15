@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>源码与函数导览 — 思源 Agent 学习站</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar__title">思源 Agent 插件<br />开发者学习站</p>
+      <p class="sidebar__meta">面向集成 AI Agent 的入门与架构说明</p>
+      <button type="button" class="menu-toggle" data-menu-toggle>目录</button>
+      <div class="nav-wrap">
+        <div class="nav-section">站点</div>
+        <ul class="nav-list">
+          <li><a href="index.html">首页</a></li>
+          <li><a href="basics.html">AI 与 LLM 基础</a></li>
+          <li><a href="agent-paradigms.html">Agent 主流范式</a></li>
+          <li><a href="plugin-architecture.html">本插件架构</a></li>
+          <li><a class="is-active" href="source-tour.html">源码与函数导览</a></li>
+          <li><a href="tools-api.html">内置工具与内核 API</a></li>
+        </ul>
+      </div>
+    </aside>
+    <main>
+      <h1>源码与函数导览</h1>
+      <p class="lead">
+        下表按文件说明职责；其后按调用链解释关键导出函数。路径均相对于插件仓库的 <code>src/</code>。
+      </p>
+
+      <h2>文件职责一览</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>文件</th>
+            <th>职责</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>index.ts</code></td>
+            <td>插件类 <code>Agent</code>：<code>onload</code> 注册 Dock 与设置；<code>onLayoutReady</code> 加载设置；<code>uninstall</code> 清理存储。</td>
+          </tr>
+          <tr>
+            <td><code>agent/chatDock.ts</code></td>
+            <td>挂载 Dock UI、工作集 CRUD 展示、聊天渲染、发送 / 停止、调用 <code>runAgentLoop</code>。</td>
+          </tr>
+          <tr>
+            <td><code>agent/agentLoop.ts</code></td>
+            <td>核心编排：<code>runAgentLoop</code>、系统提示 <code>buildSystemPrompt</code>。</td>
+          </tr>
+          <tr>
+            <td><code>agent/openaiClient.ts</code></td>
+            <td><code>openAIChatCompletion</code>：组装请求体、映射消息格式、解析 choices[0].message。</td>
+          </tr>
+          <tr>
+            <td><code>agent/builtinTools.ts</code></td>
+            <td>工具定义 <code>getBuiltinToolDefinitions</code>、OpenAI 格式转换 <code>toolsToOpenAIFormat</code>、分发执行 <code>runBuiltinTool</code>。</td>
+          </tr>
+          <tr>
+            <td><code>agent/kernelExecutor.ts</code></td>
+            <td><code>createFetchSyncKernelExecutor</code>：<code>fetchSyncPost</code> 适配 <code>KernelExecutor</code>。</td>
+          </tr>
+          <tr>
+            <td><code>agent/storage.ts</code></td>
+            <td>存储键常量、默认值、<code>normalizeSettings</code> / <code>normalizeWorkset</code>。</td>
+          </tr>
+          <tr>
+            <td><code>agent/types.ts</code></td>
+            <td>共享类型：<code>ToolDefinition</code>、<code>AuditEvent</code>、<code>KernelExecutor</code>、<code>ChatMessage</code> 等。</td>
+          </tr>
+          <tr>
+            <td><code>agent/confirmUtil.ts</code></td>
+            <td><code>confirmPromise</code>：思源同步 <code>confirm</code> 的 Promise 封装。</td>
+          </tr>
+          <tr>
+            <td><code>index.scss</code></td>
+            <td>Dock 内插件样式（BEM 风格类名）。</td>
+          </tr>
+          <tr>
+            <td><code>i18n/*.json</code></td>
+            <td>Dock 与设置项文案。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2><code>runAgentLoop</code>（<code>agent/agentLoop.ts</code>）</h2>
+      <p><strong>作用：</strong>实现「LLM ↔ 工具」多轮闭环，直到模型不再请求工具或达到轮次上限。</p>
+      <p><strong>主要参数（<code>RunAgentLoopParams</code>）：</strong></p>
+      <ul>
+        <li><code>llm</code>：<code>baseUrl</code>、<code>apiKey</code>、<code>model</code>。</li>
+        <li><code>allowSqlTool</code>：是否把 SQL 工具加入模型可见工具列表。</li>
+        <li><code>worksetRootIds</code>：<code>Set&lt;string&gt;</code>，工具层用于鉴权。</li>
+        <li><code>messages</code>：对话历史，函数会<strong>原地</strong> push user / assistant / tool（不含每轮临时拼上的 system）。</li>
+        <li><code>userText</code>：本轮用户输入。</li>
+        <li><code>signal</code>：<code>AbortSignal</code>，停止按钮触发中止。</li>
+        <li><code>onAudit</code>：审计回调。</li>
+        <li><code>kernel</code>：可选，默认 <code>createFetchSyncKernelExecutor()</code>。</li>
+        <li><code>systemExtra</code>：附加到系统提示的字符串。</li>
+      </ul>
+      <p><strong>副作用：</strong>修改 <code>messages</code>；多次网络请求；可能弹出写确认（经 <code>confirmWrite</code> 闭包）。</p>
+
+      <h2><code>buildSystemPrompt</code></h2>
+      <p>把当前工作集 rootId 列表写进系统提示，并声明三条规则：仅访问授权文档、写入需用户确认、回答简洁优先只读工具。</p>
+
+      <h2><code>openAIChatCompletion</code>（<code>agent/openaiClient.ts</code>）</h2>
+      <p>
+        将内部 <code>ChatMessage[]</code> 通过 <code>sanitizeForApi</code> 转成供应商期望 JSON；附加
+        <code>tools</code>（由 <code>getBuiltinToolDefinitions</code> 来）、<code>tool_choice: "auto"</code>。
+        处理 <code>reasoning_content</code> 以便兼容带思考链的模型回传要求。
+      </p>
+
+      <h2><code>getBuiltinToolDefinitions</code> / <code>toolsToOpenAIFormat</code></h2>
+      <p>
+        前者返回带风险元数据的工具 schema（含 <code>risk</code>、<code>needsWriteConfirm</code>、<code>source</code>）；后者去掉扩展字段，映射为 OpenAI
+        <code>tools[]</code> 项。
+      </p>
+
+      <h2><code>runBuiltinTool</code></h2>
+      <p>
+        根据 <code>name</code> 分支调用内核 API；读操作前 <code>ensureRootInWorkset</code>；写操作前 <code>ctx.confirmWrite</code>；
+        SQL 在函数内单独 <code>confirmPromise</code>。统一返回<strong>字符串</strong>（多为 JSON 字符串），作为 tool 消息的
+        <code>content</code>。
+      </p>
+
+      <h2><code>mountAgentDock</code>（<code>agent/chatDock.ts</code>）</h2>
+      <p>
+        参数为 <code>(plugin, dockElement)</code>。负责：初始 HTML 模板、加载设置与工作集、渲染消息列表、绑定发送与停止、
+        在发送路径组装 <code>runAgentLoop</code> 参数。移动端与桌面 Dock 外壳由 <code>index.ts</code> 区分，但挂载点均传入此函数。
+      </p>
+
+      <h2><code>normalizeSettings</code> / <code>normalizeWorkset</code></h2>
+      <p>从持久化读出的弱类型 JSON 规整为稳定结构，避免字段缺失导致运行期异常。</p>
+
+      <h2><code>confirmPromise</code></h2>
+      <p>把思源 UI 的确认 / 取消回调转成 <code>Promise&lt;boolean&gt;</code>，便于在 <code>async</code> 工具里 <code>await</code>。</p>
+
+      <footer class="site-footer">
+        <a href="plugin-architecture.html">← 本插件架构</a> · <a href="tools-api.html">内置工具与内核 API →</a>
+      </footer>
+    </main>
+  </div>
+  <script src="js/nav.js"></script>
+</body>
+</html>

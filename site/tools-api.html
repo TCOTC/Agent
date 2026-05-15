@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>内置工具与内核 API — 思源 Agent 学习站</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar__title">思源 Agent 插件<br />开发者学习站</p>
+      <p class="sidebar__meta">面向集成 AI Agent 的入门与架构说明</p>
+      <button type="button" class="menu-toggle" data-menu-toggle>目录</button>
+      <div class="nav-wrap">
+        <div class="nav-section">站点</div>
+        <ul class="nav-list">
+          <li><a href="index.html">首页</a></li>
+          <li><a href="basics.html">AI 与 LLM 基础</a></li>
+          <li><a href="agent-paradigms.html">Agent 主流范式</a></li>
+          <li><a href="plugin-architecture.html">本插件架构</a></li>
+          <li><a href="source-tour.html">源码与函数导览</a></li>
+          <li><a class="is-active" href="tools-api.html">内置工具与内核 API</a></li>
+        </ul>
+      </div>
+    </aside>
+    <main>
+      <h1>内置工具与内核 API</h1>
+      <p class="lead">
+        下表对应 <code>builtinTools.ts</code> 中注册的工具名：参数含义、风险、触发的思源 API，以及返回给模型的大致 JSON 形态。
+      </p>
+
+      <h2>工具总表</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>工具名</th>
+            <th>风险</th>
+            <th>用户确认</th>
+            <th>思源 API</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>siyuan_get_block_info</code></td>
+            <td>读</td>
+            <td>无</td>
+            <td><code>POST /api/block/getBlockInfo</code></td>
+          </tr>
+          <tr>
+            <td><code>siyuan_read_doc</code></td>
+            <td>读</td>
+            <td>无</td>
+            <td><code>POST /api/filetree/getDoc</code>（mode=0, size=512）</td>
+          </tr>
+          <tr>
+            <td><code>siyuan_search_blocks</code></td>
+            <td>读</td>
+            <td>无</td>
+            <td><code>POST /api/search/fullTextSearchBlock</code></td>
+          </tr>
+          <tr>
+            <td><code>siyuan_append_markdown</code></td>
+            <td>写</td>
+            <td>写入确认</td>
+            <td><code>POST /api/block/appendBlock</code>（dataType=markdown）</td>
+          </tr>
+          <tr>
+            <td><code>siyuan_update_markdown</code></td>
+            <td>写</td>
+            <td>写入确认</td>
+            <td><code>POST /api/block/updateBlock</code>（dataType=markdown）</td>
+          </tr>
+          <tr>
+            <td><code>siyuan_sql_query</code></td>
+            <td>SQL</td>
+            <td>每次 SQL 确认；且需在设置中开启 <code>allowSqlTool</code></td>
+            <td><code>POST /api/query/sql</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2><code>siyuan_get_block_info</code></h2>
+      <ul>
+        <li><strong>参数：</strong><code>id</code> 块或文档 ID。</li>
+        <li><strong>鉴权：</strong><code>ensureRootInWorkset</code>，块所属 <code>rootID</code> 须在工作集。</li>
+        <li><strong>返回：</strong><code>{ code, data, msg }</code> 的 JSON 字符串，含 box、path、rootID 等。</li>
+      </ul>
+
+      <h2><code>siyuan_read_doc</code></h2>
+      <ul>
+        <li><strong>参数：</strong><code>id</code> 必须为<strong>文档根块 ID</strong>且在工作集中。</li>
+        <li><strong>截断：</strong>HTML 内容长度超过 <code>MAX_DOC_SNIPPET</code>（14_000）时截断并标记 <code>truncated: true</code>。</li>
+        <li><strong>返回字段示例：</strong><code>rootID</code>、<code>box</code>、<code>path</code>、<code>blockCount</code>、<code>content</code>。</li>
+      </ul>
+
+      <h2><code>siyuan_search_blocks</code></h2>
+      <ul>
+        <li><strong>参数：</strong><code>query</code>；可选 <code>page</code>（默认 1）、<code>pageSize</code>（默认 16）、<code>method</code>（0 关键字 / 1 查询语法 / 3 正则）。</li>
+        <li><strong>范围：</strong>对工作集中每个 rootId 调 <code>getBlockInfo</code> 拼出 <code>paths</code>，限定搜索路径。</li>
+        <li><strong>边界：</strong>工作集为空时返回错误 JSON，避免全库盲搜。</li>
+      </ul>
+
+      <h2><code>siyuan_append_markdown</code></h2>
+      <ul>
+        <li><strong>参数：</strong><code>parent_id</code>、<code>markdown</code>。</li>
+        <li><strong>鉴权：</strong>父块所在文档根在工作集。</li>
+        <li><strong>确认文案：</strong>包含 parent 与 markdown 长度，便于用户判断规模。</li>
+      </ul>
+
+      <h2><code>siyuan_update_markdown</code></h2>
+      <ul>
+        <li><strong>参数：</strong><code>id</code>（目标块）、<code>markdown</code>。</li>
+        <li><strong>鉴权：</strong>目标块所在文档根在工作集。</li>
+      </ul>
+
+      <h2><code>siyuan_sql_query</code></h2>
+      <ul>
+        <li><strong>前置：</strong><code>allowSqlTool</code> 为真才会出现在模型工具列表；内核侧仍有权限与行数限制（见思源文档）。</li>
+        <li><strong>确认：</strong>弹窗展示 SQL 片段（最长约 800 字符）。</li>
+      </ul>
+
+      <h2>扩展新工具时的检查清单</h2>
+      <ol>
+        <li>在 <code>getBuiltinToolDefinitions</code> 增加 schema 与 <code>risk</code> / <code>needsWriteConfirm</code>。</li>
+        <li>在 <code>runBuiltinTool</code> 增加分支：先做工作集或角色校验，再执行 <code>kernel.post</code>。</li>
+        <li>若返回结构化数据，保持<strong>字符串化 JSON</strong>，便于模型在下一轮解析。</li>
+        <li>评估是否需要新的设置项或审计事件类型。</li>
+      </ol>
+
+      <footer class="site-footer">
+        <a href="source-tour.html">← 源码与函数导览</a> · <a href="index.html">返回首页</a>
+      </footer>
+    </main>
+  </div>
+  <script src="js/nav.js"></script>
+</body>
+</html>

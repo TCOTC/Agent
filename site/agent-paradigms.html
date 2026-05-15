@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent 主流范式 — 思源 Agent 学习站</title>
+  <link rel="stylesheet" href="css/main.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar__title">思源 Agent 插件<br />开发者学习站</p>
+      <p class="sidebar__meta">面向集成 AI Agent 的入门与架构说明</p>
+      <button type="button" class="menu-toggle" data-menu-toggle>目录</button>
+      <div class="nav-wrap">
+        <div class="nav-section">站点</div>
+        <ul class="nav-list">
+          <li><a href="index.html">首页</a></li>
+          <li><a href="basics.html">AI 与 LLM 基础</a></li>
+          <li><a class="is-active" href="agent-paradigms.html">Agent 主流范式</a></li>
+          <li><a href="plugin-architecture.html">本插件架构</a></li>
+          <li><a href="source-tour.html">源码与函数导览</a></li>
+          <li><a href="tools-api.html">内置工具与内核 API</a></li>
+        </ul>
+      </div>
+    </aside>
+    <main>
+      <h1>Agent 主流范式</h1>
+      <p class="lead">
+        「Agent」不是单一标准，而是一族<strong>让模型与环境反复交互</strong>的工程模式。下面列出常见范式，并说明本插件落在哪一类。
+      </p>
+
+      <h2>1. 工具增强聊天（Tool-augmented chat loop）</h2>
+      <p>
+        模型在每一轮可以返回普通文本，或返回一组 <code>tool_calls</code>；运行时执行工具，把 <code>tool</code> 消息追加进上下文，再调模型。
+        循环直到没有工具调用或达到轮次上限。优点是实现直接、易与现有 Chat API 对齐。<strong>本插件即采用此范式</strong>（见
+        <code>runAgentLoop</code>）。
+      </p>
+
+      <h2>2. ReAct（推理 + 行动）</h2>
+      <p>
+        论文形态的 ReAct 常在输出中交替「思考句」与「行动句」（如调用搜索）。现代 API 则往往把「思考」藏在链式消息或专用字段（例如某些模型的
+        <code>reasoning_content</code>）里。概念上仍属于：观察环境 → 推理下一步工具或回答。
+      </p>
+
+      <h2>3. 规划—执行（Planner / Executor）</h2>
+      <p>
+        先由模型或规则层生成步骤列表，再由执行器逐步完成。适合长任务、需要人类审批的流程。本 demo 未单独拆分规划器，但你可以在上层加「先输出计划再执行」的系统提示或第二模型。
+      </p>
+
+      <h2>4. 多 Agent（协作或分工）</h2>
+      <p>
+        多个不同系统提示或不同工具的「子助手」通过消息总线、主管模型或固定 handoff 规则协作。扩展思源集成时，可按功能域（检索、写作、排版）拆 Agent，但要注意延迟与成本。
+      </p>
+
+      <h2>5. RAG（检索增强生成）</h2>
+      <p>
+        在回答问题前，从向量库或搜索引擎取回相关片段放入上下文。本插件用「工作集 + 全文搜索工具」实现<strong>显式范围</strong>内的检索，而不是隐式向量库；两者可并存：工具负责取数，RAG 负责embedding 召回。
+      </p>
+
+      <h2>6. MCP（Model Context Protocol）</h2>
+      <p>
+        MCP 是 Anthropic 推动的一种<strong>工具与资源暴露协议</strong>，把「有哪些工具、如何调用」从应用里抽离到标准服务。
+        本仓库 <code>types.ts</code> 里 <code>ToolSource</code> 已预留 <code>"mcp"</code>，表示未来可把部分工具从内置改为 MCP 服务而不改 Agent 循环形状。
+      </p>
+
+      <h2>7. 人机协同（Human-in-the-loop）</h2>
+      <p>
+        在写库、删数据、执行 SQL 等高风险操作前弹窗确认，是企业场景常见要求。本插件对写工具与 SQL 使用 <code>confirmPromise</code>，
+        用户拒绝后工具返回 <code>user_cancelled</code>，模型在后续轮次应友好说明，体现典型的 HITL 设计。
+      </p>
+
+      <div class="callout callout--warn">
+        <strong>安全提示：</strong>工具能力 = 模型能间接触达的权限。务必结合<strong>最小权限</strong>（本插件用工作集限定文档根 ID）、
+        确认框与审计日志，避免「模型被诱导越权读写」。
+      </div>
+
+      <h2>与本插件的对应关系小结</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>范式</th>
+            <th>本插件中的体现</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>工具增强聊天</td>
+            <td><code>runAgentLoop</code> + <code>openAIChatCompletion</code> + <code>runBuiltinTool</code></td>
+          </tr>
+          <tr>
+            <td>RAG / 检索</td>
+            <td><code>siyuan_search_blocks</code>、<code>siyuan_read_doc</code>（范围受工作集路径限制）</td>
+          </tr>
+          <tr>
+            <td>HITL</td>
+            <td><code>confirmPromise</code> 写入确认、SQL 每次确认</td>
+          </tr>
+          <tr>
+            <td>MCP</td>
+            <td>类型预留，当前未接 MCP 服务</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <footer class="site-footer">
+        <a href="basics.html">← AI 与 LLM 基础</a> · <a href="plugin-architecture.html">本插件架构 →</a>
+      </footer>
+    </main>
+  </div>
+  <script src="js/nav.js"></script>
+</body>
+</html>
