@@ -79,26 +79,36 @@
     font-size: 12px;
   }
 
-  &--user pre {
-    color: var(--b3-theme-on-surface);
+  &--assistant &__body {
+    color: var(--b3-theme-on-background);
   }
 
-  &--assistant pre {
-    color: var(--b3-theme-on-background);
+  &__body.b3-typography {
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  &__reasoning {
+    margin-bottom: 6px;
+    opacity: 0.85;
+    font-size: 11px;
+    border-left: 2px solid var(--b3-border-color);
+    padding-left: 8px;
+  }
+
+  &__reasoning.b3-typography {
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  &--user pre {
+    color: var(--b3-theme-on-surface);
   }
 
   &__tools {
     margin-top: 4px;
     opacity: 0.85;
     font-size: 11px;
-  }
-
-  &__reasoning {
-    margin-bottom: 6px;
-    opacity: 0.75;
-    font-size: 11px;
-    border-left: 2px solid var(--b3-border-color);
-    padding-left: 8px;
   }
 
   &--tool pre {

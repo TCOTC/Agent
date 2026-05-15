@@ -12,6 +12,11 @@ import {
     STORAGE_AGENT_SETTINGS,
     STORAGE_AGENT_WORKSET,
 } from "./storage";
+import {
+    forgetStreamMdCache,
+    getLuteOrNull,
+    renderStreamingAssistantMd,
+} from "./streamMdRender";
 import type {
     AuditEvent,
     ChatMessage,
@@ -149,14 +154,28 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
                     }</pre></div>`,
                 );
             } else if (m.role === "assistant") {
-                const reasoning = m.reasoning_content ?
-                    `<pre class="plugin-agent-msg__reasoning">${esc(String(m.reasoning_content))}</pre>` :
+                const lute = getLuteOrNull();
+                const reasoningRaw = m.reasoning_content != null && m.reasoning_content !== "" ?
+                    String(m.reasoning_content) :
                     "";
+                const reasoning = reasoningRaw ?
+                    (lute ?
+                        `<div class="plugin-agent-msg__reasoning b3-typography b3-typography--default">${
+                            renderStreamingAssistantMd(m, reasoningRaw, lute, "reasoning")
+                        }</div>` :
+                        `<pre class="plugin-agent-msg__reasoning">${esc(reasoningRaw)}</pre>`) :
+                    "";
+                const bodyRaw = m.content ?? "";
+                const body = lute ?
+                    `<div class="plugin-agent-msg__body b3-typography b3-typography--default">${
+                        renderStreamingAssistantMd(m, bodyRaw, lute, "content")
+                    }</div>` :
+                    `<pre>${esc(bodyRaw)}</pre>`;
                 const tools = m.tool_calls?.map((t) => `${t.function.name}(${t.function.arguments})`).join("\n");
                 parts.push(
                     `<div class="plugin-agent-msg plugin-agent-msg--assistant"><div class="plugin-agent-msg__role">Assistant</div>${
                         reasoning
-                    }<pre>${esc(m.content ?? "")}</pre>${
+                    }${body}${
                         tools ?
                             `<pre class="plugin-agent-msg__tools">${esc(tools)}</pre>` :
                             ""
@@ -193,7 +212,10 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
             return;
         }
         const rootId = eds[0].protyle.block.rootID;
-        if (!workset.rootIds.includes(rootId)) {
+        if (!rootId) {
+            return;
+        }
+        if (workset.rootIds.indexOf(rootId) === -1) {
             workset.rootIds.push(rootId);
             persistWorkset();
             renderWorkset();
@@ -205,6 +227,11 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
         renderWorkset();
     });
     dockElement.querySelector('[data-action="clear-chat"]')?.addEventListener("click", () => {
+        for (const m of chatMessages) {
+            if (m.role === "assistant") {
+                forgetStreamMdCache(m);
+            }
+        }
         chatMessages.length = 0;
         renderMessages();
     });
