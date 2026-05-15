@@ -20,5 +20,8 @@
   "agentNoMessages": "No messages yet",
   "agentOpenDocFirst": "Open a document first",
   "agentNeedApiKey": "Set API Key in plugin settings first",
-  "agentError": "Error"
+  "agentError": "Error",
+  "agentCopyMd": "Copy",
+  "agentCopiedMd": "Copied",
+  "agentCopyFailed": "Copy failed"
 }

@@ -1,30 +1,28 @@
 /**
- * 使用思源前端提供的 window.Lute 渲染 Markdown，外层由调用方包裹 `b3-typography`（勿使用 `protyle-wysiwyg`）。
+ * Markdown → HTML 走内核 `/api/lute/md2html`（`render: protyle-preview`）；插入 DOM 后由
+ * `typographyPostRender` 与导出预览管线对齐。
  *
- * 说明：内核导出预览使用 `ProtylePreview(tree, …)`，但在浏览器 GopherJS 中若将 `Md2BlockDOMTree`
- * 返回的 AST 再传入 `ProtylePreview`，会在 `$externalize` 时因语法树图结构导致栈溢出。
- * 因此此处采用纯字符串链路：优先 `MarkdownStr`（一次 `Md2HTML`），避免 `Md2BlockDOM` → `BlockDOM2HTML`
- * 往返在行级公式 `$…$` 与 `^` 上标同时开启时的解析歧义；无 `MarkdownStr` 时回退 `Md2BlockDOM` → `BlockDOM2HTML`。
- * 插入 DOM 后由
- * `markdownDomUpgrade`（图表 `div.language-*`、代码 `pre.code-block`、任务列表 `protyle-task` 等）与
- * `typographyPostRender` 中的 `agentProcessRender` / `ProtyleMethod.highlightRender` 对齐导出预览管线。
+ * 流式封存边界：先要求 `Md2BlockDOM` 顶层块数 ≥ 2，再用「整段 tail 与前缀 tail 的第一块
+ * `innerHTML` 一致」对齐切点（忽略块根 `id` 等属性差异），避免仅在反引号等处块数跳变导致的误切分。
+ * 搜索顺序：优先在「相对上一帧 tail 长度的新增区间」内从 `hi` 向下扫描，未命中再扫其余区间。
+ * 详见 `docs/流式-Markdown-封存策略讨论.md`。
  *
- * 流式优化：当文档根下已出现至少 2 个第一层块时，说明第一个块已完整，将其 Markdown 封存并
- * 只对新尾部反复解析，避免已稳定块重复走 Lute。思考结束后一旦正文开始输出，可对推理文本调用
- * `finalizeStreamingMdRemainder`，把仍留在尾部的 Markdown 一次性封存，避免推理区 tail 随正文 RAF 反复渲染。
+ * 思源客户端内 Lute 总可用（优先编辑器 Protyle，否则 `window.Lute.New`）。
+ *
+ * 流式优化：当可对齐封存第一层块时，将其 Markdown 封存并只对新尾部反复请求 md2html。
+ * 思考结束后一旦正文开始输出，可对推理文本调用 `finalizeStreamingMdRemainder`，把仍留在尾部的
+ * Markdown 一次性封存，避免推理区 tail 随正文 RAF 反复渲染。
  */
-import {getAllEditor} from "siyuan";
+import {fetchSyncPost, getAllEditor} from "siyuan";
 import type {ChatMessage} from "./types";
 
 interface LuteGlobalNs {
     New(options?: unknown): LuteEngine;
 }
 
-/** 与思源 app/src/types/protyle.d.ts 中 Lute 实例对齐的最小运行时形状 */
-interface LuteEngine {
+/** 仅用于 `Md2BlockDOM` 流式封存边界；HTML 已全部走 `markdownToProtylePreviewHtml`（内核 md2html）。 */
+export interface LuteEngine {
     Md2BlockDOM(markdown: string, reserveEmptyParagraph?: boolean): string;
-    BlockDOM2HTML?(blockDOM: string): string;
-    MarkdownStr?(name: string, markdown: string): string;
     SetSpin?(v: boolean): void;
     SetProtyleWYSIWYG?(v: boolean): void;
     SetProtyleMarkNetImg?(v: boolean): void;
@@ -67,6 +65,11 @@ export interface StreamMdCache {
     sealedLen: number;
     /** 与每一封存块顺序对应的预览 HTML 片段 */
     sealedHtmlParts: string[];
+    /**
+     * 上一帧结束时未封存 tail 的字节长度，用于封存切点搜索的窄区间（本轮新增 ≈ tail.length - 该值）。
+     * 同一次 `getStreamingAssistantMdParts` 内第二次及以后的封存轮次传 0，退化为全区间扫描。
+     */
+    lastTailLen: number;
 }
 
 /** 供 DOM 增量挂载：已封存的顶层块 HTML 与未完成的尾部 HTML */
@@ -118,8 +121,75 @@ function maxPrefixSingleTopBlockLen(lute: LuteEngine, md: string): number {
     return best;
 }
 
+/** 取 `Md2BlockDOM` 顶层第一个块的内容 HTML（不含块根属性，等价于首块 `innerHTML`）。 */
+function getFirstBlockInnerFromMd2BlockDomHtml(html: string): string | null {
+    const trimmed = html.trim();
+    if (!trimmed) {
+        return null;
+    }
+    const tpl = document.createElement("template");
+    tpl.innerHTML = trimmed;
+    const first = tpl.content.firstElementChild;
+    if (!first) {
+        return null;
+    }
+    return first.innerHTML;
+}
+
+function getFirstBlockInnerFromMd(lute: LuteEngine, md: string): string | null {
+    if (!md.trim()) {
+        return null;
+    }
+    return getFirstBlockInnerFromMd2BlockDomHtml(lute.Md2BlockDOM(md, false));
+}
+
+/**
+ * 在 `tail` 已含至少 2 个顶层块时，求首块 Markdown 的封存长度 `L`：
+ * `tail.slice(0,L)` 须为恰好 1 个顶层块，且其首块 `innerHTML` 与整段 `tail` 的首块一致。
+ * `prevTailLenForNarrow` 为上一帧 tail 长度；传 0 表示不缩窄、从 `hi` 一直扫到 1。
+ */
+function findSealLenFirstBlockAligned(
+    lute: LuteEngine,
+    tail: string,
+    prevTailLenForNarrow: number,
+): number {
+    if (countTopLevelBlockDivs(lute, tail) < 2) {
+        return 0;
+    }
+    const refInner = getFirstBlockInnerFromMd(lute, tail);
+    if (refInner == null) {
+        return 0;
+    }
+    const hi = maxPrefixSingleTopBlockLen(lute, tail);
+    if (hi <= 0) {
+        return 0;
+    }
+    const delta = Math.max(1, tail.length - Math.max(0, prevTailLenForNarrow));
+    const lo = Math.max(1, hi - delta);
+
+    const prefixOk = (L: number): boolean => {
+        const pref = tail.slice(0, L);
+        if (countTopLevelBlockDivs(lute, pref) !== 1) {
+            return false;
+        }
+        return getFirstBlockInnerFromMd(lute, pref) === refInner;
+    };
+
+    for (let L = hi; L >= lo; L--) {
+        if (prefixOk(L)) {
+            return L;
+        }
+    }
+    for (let L = lo - 1; L >= 1; L--) {
+        if (prefixOk(L)) {
+            return L;
+        }
+    }
+    return 0;
+}
+
 function configureFallbackLute(engine: LuteEngine): void {
-    // 与思源 setLute 对齐的主要开关，保证解析路径与编辑器一致（渲染走 ProtylePreview 而非 wysiwyg DOM）
+    // 与思源 setLute 对齐的主要开关，使 `window.Lute.New` 实例的 `Md2BlockDOM` 与编辑器块边界一致（此处不做任何 HTML 渲染）
     engine.SetSpin?.(true);
     engine.SetProtyleWYSIWYG?.(true);
     engine.SetFileAnnotationRef?.(true);
@@ -168,17 +238,7 @@ function configureFallbackLute(engine: LuteEngine): void {
     }
 }
 
-/** 与当前编辑器块级预览选项 `preview.markdown.sanitize` 对齐，用于在助手渲染后恢复 Lute 状态 */
-function getEditorPreviewMarkdownSanitize(): boolean {
-    const ed = getAllEditor()[0];
-    const pm = ed?.protyle?.options?.preview?.markdown as {sanitize?: boolean} | undefined;
-    if (pm && typeof pm.sanitize === "boolean") {
-        return pm.sanitize;
-    }
-    return true;
-}
-
-function getLuteEngine(): LuteEngine | null {
+function getLuteEngine(): LuteEngine {
     const eds = getAllEditor();
     const fromEditor = eds[0]?.protyle?.lute as LuteEngine | undefined;
     if (fromEditor) {
@@ -186,7 +246,7 @@ function getLuteEngine(): LuteEngine | null {
     }
     const LuteNs = (window as unknown as {Lute?: LuteGlobalNs}).Lute;
     if (!LuteNs?.New) {
-        return null;
+        throw new Error("[Agent] Lute 不可用：请在思源笔记客户端中使用本插件。");
     }
     const engine = LuteNs.New(undefined) as LuteEngine;
     configureFallbackLute(engine);
@@ -195,61 +255,41 @@ function getLuteEngine(): LuteEngine | null {
 
 /**
  * Markdown → 可在 `b3-typography` 中使用的 HTML 片段（innerHTML，勿包 `protyle-wysiwyg`）。
+ * 由内核 `/api/lute/md2html` + `render: protyle-preview` 生成。
  */
-export function markdownToProtylePreviewHtml(lute: LuteEngine, md: string): string {
-    if (!md) {
+export async function markdownToProtylePreviewHtml(md: string): Promise<string> {
+    if (!md.trim()) {
         return "";
     }
-    const markCfg = (window as unknown as {siyuan?: {config?: {editor?: {displayNetImgMark?: boolean}}}})
-        .siyuan?.config?.editor?.displayNetImgMark;
-    const prevMarkNetImg = markCfg !== undefined ? Boolean(markCfg) : true;
-    lute.SetProtyleMarkNetImg?.(false);
-
-    const mdSnap = (window as unknown as {siyuan?: {config?: {editor?: {markdown?: {inlineMath?: boolean}}}}})
-        .siyuan?.config?.editor?.markdown;
-    const restoreInlineMath = mdSnap ? Boolean(mdSnap.inlineMath) : true;
-    const restoreSanitize = getEditorPreviewMarkdownSanitize();
-
-    let html: string;
-    try {
-        // 助手区与块级预览的 sanitize 可独立：此处临时关闭以便行内 HTML 生效，结束后恢复编辑器预览选项。
-        lute.SetSanitize?.(false);
-        lute.SetInlineMath?.(true);
-        if (typeof lute.MarkdownStr === "function") {
-            html = lute.MarkdownStr("", md);
-        } else if (typeof lute.BlockDOM2HTML === "function") {
-            const blockDom = lute.Md2BlockDOM(md, false);
-            html = lute.BlockDOM2HTML(blockDom);
-        } else {
-            html = "";
-        }
-    } finally {
-        lute.SetSanitize?.(restoreSanitize);
-        lute.SetInlineMath?.(restoreInlineMath);
-        lute.SetProtyleMarkNetImg?.(prevMarkNetImg);
+    const res = await fetchSyncPost("/api/lute/md2html", {markdown: md, render: "protyle-preview"});
+    if (res.code !== 0 || res.data == null) {
+        console.warn("[Agent] /api/lute/md2html failed:", res.msg);
+        return "";
     }
-    return html;
+    const html = (res.data as {html?: unknown}).html;
+    return typeof html === "string" ? html : "";
 }
 
 function resetCache(c: StreamMdCache): void {
     c.sealedLen = 0;
     c.sealedHtmlParts.length = 0;
+    c.lastTailLen = 0;
 }
 
 /**
  * 将当前尚未封存的尾部 Markdown 一次性并入封存区（`sealedLen` 直至 `fullMd.length`）。
  * 在「思考已结束、正文开始输出」时用于推理通道，避免推理区 tail 在后续帧随正文同步反复渲染。
  */
-export function finalizeStreamingMdRemainder(
+export async function finalizeStreamingMdRemainder(
     msg: ChatMessage,
     fullMd: string,
     lute: LuteEngine,
     kind: "content" | "reasoning" = "content",
-): void {
+): Promise<void> {
     const map = getCacheMap(kind);
     let c = map.get(msg);
     if (!c) {
-        c = {sealedLen: 0, sealedHtmlParts: []};
+        c = {sealedLen: 0, sealedHtmlParts: [], lastTailLen: 0};
         map.set(msg, c);
     }
 
@@ -260,25 +300,27 @@ export function finalizeStreamingMdRemainder(
 
     const tailMd = fullMd.slice(c.sealedLen);
     if (!tailMd) {
+        c.lastTailLen = 0;
         return;
     }
-    c.sealedHtmlParts.push(markdownToProtylePreviewHtml(lute, tailMd));
+    c.sealedHtmlParts.push(await markdownToProtylePreviewHtml(tailMd));
     c.sealedLen = fullMd.length;
+    c.lastTailLen = 0;
 }
 
 /**
  * 更新流式 Markdown 缓存并返回「封存块 + 尾部」HTML，供 DOM 按块增量挂载。
  */
-export function getStreamingAssistantMdParts(
+export async function getStreamingAssistantMdParts(
     msg: ChatMessage,
     fullMd: string,
     lute: LuteEngine,
     kind: "content" | "reasoning" = "content",
-): StreamingMdDomParts {
+): Promise<StreamingMdDomParts> {
     const map = getCacheMap(kind);
     let c = map.get(msg);
     if (!c) {
-        c = {sealedLen: 0, sealedHtmlParts: []};
+        c = {sealedLen: 0, sealedHtmlParts: [], lastTailLen: 0};
         map.set(msg, c);
     }
 
@@ -288,18 +330,23 @@ export function getStreamingAssistantMdParts(
     }
 
     let tail = fullMd.slice(c.sealedLen);
+    let sealPass = 0;
     while (countTopLevelBlockDivs(lute, tail) >= 2) {
-        const L = maxPrefixSingleTopBlockLen(lute, tail);
+        const narrowBase = sealPass === 0 ? c.lastTailLen : 0;
+        const L = findSealLenFirstBlockAligned(lute, tail, narrowBase);
+        sealPass++;
         if (L <= 0) {
             break;
         }
         const sealedMd = tail.slice(0, L);
-        c.sealedHtmlParts.push(markdownToProtylePreviewHtml(lute, sealedMd));
+        c.sealedHtmlParts.push(await markdownToProtylePreviewHtml(sealedMd));
         c.sealedLen += L;
         tail = fullMd.slice(c.sealedLen);
     }
 
-    const tailHtml = markdownToProtylePreviewHtml(lute, tail);
+    c.lastTailLen = tail.length;
+
+    const tailHtml = await markdownToProtylePreviewHtml(tail);
     return {
         sealedHtmlParts: c.sealedHtmlParts.slice(),
         tailHtml,
@@ -309,13 +356,13 @@ export function getStreamingAssistantMdParts(
 /**
  * 将助手消息的一段 Markdown 流式渲染为预览 HTML（单字符串，会拼接全部块）；在 `msg` 上维护封存块缓存。
  */
-export function renderStreamingAssistantMd(
+export async function renderStreamingAssistantMd(
     msg: ChatMessage,
     fullMd: string,
     lute: LuteEngine,
     kind: "content" | "reasoning" = "content",
-): string {
-    const p = getStreamingAssistantMdParts(msg, fullMd, lute, kind);
+): Promise<string> {
+    const p = await getStreamingAssistantMdParts(msg, fullMd, lute, kind);
     return p.sealedHtmlParts.join("") + p.tailHtml;
 }
 
@@ -324,6 +371,7 @@ export function forgetStreamMdCache(msg: ChatMessage): void {
     streamCacheReasoning.delete(msg);
 }
 
-export function getLuteOrNull(): LuteEngine | null {
+/** 供流式 `Md2BlockDOM` 封存用；与 `markdownToProtylePreviewHtml` 无耦合。 */
+export function getMd2BlockDomLute(): LuteEngine {
     return getLuteEngine();
 }

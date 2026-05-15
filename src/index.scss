@@ -91,30 +91,8 @@
     line-height: 1.45;
   }
 
-  &__body--plain {
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: var(--b3-font-family-code);
-    font-size: 12px;
-    color: var(--b3-theme-on-background);
-  }
-
   &__reasoning-host:empty {
     display: none;
-  }
-
-  /** 流式 Markdown：已封存的第一层块，innerHTML 仅写入一次 */
-  .plugin-agent-md-sealed {
-    display: block;
-  }
-
-  .plugin-agent-md-tail {
-    display: block;
-
-    &:empty {
-      display: none;
-    }
   }
 
   &__reasoning {
@@ -138,6 +116,12 @@
     margin-top: 4px;
     opacity: 0.85;
     font-size: 11px;
+  }
+
+  &__footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
   }
 
   &--tool pre {
