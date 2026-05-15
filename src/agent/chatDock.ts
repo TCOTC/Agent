@@ -13,9 +13,10 @@ import {
     STORAGE_AGENT_WORKSET,
 } from "./storage";
 import {
+    finalizeStreamingMdRemainder,
     forgetStreamMdCache,
     getLuteOrNull,
-    renderStreamingAssistantMd,
+    getStreamingAssistantMdParts,
 } from "./streamMdRender";
 import type {
     AuditEvent,
@@ -29,6 +30,15 @@ function esc(s: string): string {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
 }
+
+const lastAssistantPatchKey = "__agentLastPatch" as const;
+
+type LastAssistantPatch = {
+    content: string;
+    reasoning: string;
+    toolsSig: string;
+    luteOn: boolean;
+};
 
 function formatAuditLine(e: AuditEvent): string {
     switch (e.kind) {
@@ -96,6 +106,8 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
     let settings = {...defaultAgentSettings};
     let workset = {...defaultWorkset};
     const chatMessages: ChatMessage[] = [];
+    /** 每条内存中的消息对应一行 DOM，流式时只更新该行子节点 */
+    const rowByMessage = new WeakMap<ChatMessage, HTMLElement>();
     let abortCtl: AbortController | null = null;
     let streamRenderRaf = 0;
 
@@ -144,53 +156,271 @@ export function mountAgentDock(plugin: Plugin, dockElement: HTMLElement): void {
         });
     }
 
-    function renderMessages() {
-        const parts: string[] = [];
-        for (const m of chatMessages) {
-            if (m.role === "user") {
-                parts.push(
-                    `<div class="plugin-agent-msg plugin-agent-msg--user"><div class="plugin-agent-msg__role">User</div><pre>${
-                        esc(m.content ?? "")
-                    }</pre></div>`,
-                );
-            } else if (m.role === "assistant") {
-                const lute = getLuteOrNull();
-                const reasoningRaw = m.reasoning_content != null && m.reasoning_content !== "" ?
-                    String(m.reasoning_content) :
-                    "";
-                const reasoning = reasoningRaw ?
-                    (lute ?
-                        `<div class="plugin-agent-msg__reasoning b3-typography b3-typography--default">${
-                            renderStreamingAssistantMd(m, reasoningRaw, lute, "reasoning")
-                        }</div>` :
-                        `<pre class="plugin-agent-msg__reasoning">${esc(reasoningRaw)}</pre>`) :
-                    "";
-                const bodyRaw = m.content ?? "";
-                const body = lute ?
-                    `<div class="plugin-agent-msg__body b3-typography b3-typography--default">${
-                        renderStreamingAssistantMd(m, bodyRaw, lute, "content")
-                    }</div>` :
-                    `<pre>${esc(bodyRaw)}</pre>`;
-                const tools = m.tool_calls?.map((t) => `${t.function.name}(${t.function.arguments})`).join("\n");
-                parts.push(
-                    `<div class="plugin-agent-msg plugin-agent-msg--assistant"><div class="plugin-agent-msg__role">Assistant</div>${
-                        reasoning
-                    }${body}${
-                        tools ?
-                            `<pre class="plugin-agent-msg__tools">${esc(tools)}</pre>` :
-                            ""
-                    }</div>`,
-                );
-            } else if (m.role === "tool") {
-                parts.push(
-                    `<div class="plugin-agent-msg plugin-agent-msg--tool"><div class="plugin-agent-msg__role">Tool ${
-                        esc(m.tool_call_id ?? "")
-                    }</div><pre>${esc((m.content ?? "").slice(0, 4000))}</pre></div>`,
-                );
+    function renderEmptyMessagesPlaceholder(): void {
+        elMessages.replaceChildren();
+        const empty = document.createElement("div");
+        empty.className = "b3-label__text";
+        empty.dataset.agentPlaceholder = "1";
+        empty.textContent = L("agentNoMessages", "暂无消息");
+        elMessages.appendChild(empty);
+    }
+
+    function buildUserRow(m: ChatMessage): HTMLElement {
+        const wrap = document.createElement("div");
+        wrap.className = "plugin-agent-msg plugin-agent-msg--user";
+        const role = document.createElement("div");
+        role.className = "plugin-agent-msg__role";
+        role.textContent = "User";
+        const pre = document.createElement("pre");
+        pre.textContent = m.content ?? "";
+        wrap.append(role, pre);
+        return wrap;
+    }
+
+    function patchUserRow(row: HTMLElement, m: ChatMessage): void {
+        const pre = row.querySelector("pre");
+        if (pre) {
+            pre.textContent = m.content ?? "";
+        }
+    }
+
+    function buildToolRow(m: ChatMessage): HTMLElement {
+        const wrap = document.createElement("div");
+        wrap.className = "plugin-agent-msg plugin-agent-msg--tool";
+        const role = document.createElement("div");
+        role.className = "plugin-agent-msg__role";
+        role.textContent = `Tool ${m.tool_call_id ?? ""}`;
+        const pre = document.createElement("pre");
+        pre.textContent = (m.content ?? "").slice(0, 4000);
+        wrap.append(role, pre);
+        return wrap;
+    }
+
+    function patchToolRow(row: HTMLElement, m: ChatMessage): void {
+        const pre = row.querySelector("pre");
+        if (pre) {
+            pre.textContent = (m.content ?? "").slice(0, 4000);
+        }
+    }
+
+    function buildAssistantRow(): HTMLElement {
+        const wrap = document.createElement("div");
+        wrap.className = "plugin-agent-msg plugin-agent-msg--assistant";
+        const role = document.createElement("div");
+        role.className = "plugin-agent-msg__role";
+        role.textContent = "Assistant";
+        const reasoningHost = document.createElement("div");
+        reasoningHost.className = "plugin-agent-msg__reasoning-host";
+        const body = document.createElement("div");
+        body.dataset.part = "body";
+        const tools = document.createElement("pre");
+        tools.className = "plugin-agent-msg__tools";
+        tools.hidden = true;
+        tools.dataset.part = "tools";
+        wrap.append(role, reasoningHost, body, tools);
+        return wrap;
+    }
+
+    type LuteNonNull = NonNullable<ReturnType<typeof getLuteOrNull>>;
+
+    /**
+     * 将「已封存的第一层块」各自对应一个子节点且只写一次 innerHTML；仅尾部容器每帧更新。
+     */
+    function syncStreamingMdHost(
+        host: HTMLElement,
+        m: ChatMessage,
+        fullMd: string,
+        lute: LuteNonNull,
+        kind: "content" | "reasoning",
+    ): void {
+        const {sealedHtmlParts, tailHtml} = getStreamingAssistantMdParts(m, fullMd, lute, kind);
+        const n = sealedHtmlParts.length;
+
+        host.querySelectorAll("[data-agent-md-sealed]").forEach((el) => {
+            const idx = parseInt((el as HTMLElement).dataset.agentMdSealed ?? "", 10);
+            if (!Number.isFinite(idx) || idx >= n) {
+                el.remove();
+            }
+        });
+
+        const tailList = [...host.querySelectorAll("[data-agent-md-tail=\"1\"]")];
+        if (tailList.length > 1) {
+            for (let i = 1; i < tailList.length; i++) {
+                tailList[i].remove();
             }
         }
-        elMessages.innerHTML = parts.join("") ||
-            `<div class="b3-label__text">${esc(L("agentNoMessages", "暂无消息"))}</div>`;
+        let tailEl = host.querySelector("[data-agent-md-tail=\"1\"]") as HTMLElement | null;
+
+        for (let i = 0; i < n; i++) {
+            const html = sealedHtmlParts[i];
+            let chunk = host.querySelector(`[data-agent-md-sealed="${i}"]`) as HTMLElement | null;
+            if (!chunk) {
+                chunk = document.createElement("div");
+                chunk.dataset.agentMdSealed = String(i);
+                chunk.className = "plugin-agent-md-sealed";
+                chunk.innerHTML = html;
+                if (tailEl) {
+                    host.insertBefore(chunk, tailEl);
+                } else {
+                    host.appendChild(chunk);
+                }
+            }
+        }
+
+        if (!tailEl) {
+            tailEl = document.createElement("div");
+            tailEl.dataset.agentMdTail = "1";
+            tailEl.className = "plugin-agent-md-tail";
+            host.appendChild(tailEl);
+        }
+        if (tailEl.innerHTML !== tailHtml) {
+            tailEl.innerHTML = tailHtml;
+        }
+    }
+
+    function patchAssistantRow(row: HTMLElement, m: ChatMessage, lute: ReturnType<typeof getLuteOrNull>): void {
+        const reasoningRaw = m.reasoning_content != null && m.reasoning_content !== "" ?
+            String(m.reasoning_content) :
+            "";
+        const toolsSig = m.tool_calls?.map((t) => `${t.function.name}(${t.function.arguments})`).join("\n") ?? "";
+        const contentRaw = m.content ?? "";
+        const prev = (row as unknown as Record<string, LastAssistantPatch | undefined>)[lastAssistantPatchKey];
+        if (
+            prev &&
+            prev.content === contentRaw &&
+            prev.reasoning === reasoningRaw &&
+            prev.toolsSig === toolsSig &&
+            prev.luteOn === Boolean(lute)
+        ) {
+            return;
+        }
+        (row as unknown as Record<string, LastAssistantPatch>)[lastAssistantPatchKey] = {
+            content: contentRaw,
+            reasoning: reasoningRaw,
+            toolsSig,
+            luteOn: Boolean(lute),
+        };
+
+        const reasoningHost = row.querySelector(".plugin-agent-msg__reasoning-host") as HTMLElement | null;
+        const bodyEl = row.querySelector("[data-part=\"body\"]") as HTMLElement | null;
+        const toolsEl = row.querySelector("[data-part=\"tools\"]") as HTMLPreElement | null;
+        if (!reasoningHost || !bodyEl || !toolsEl) {
+            return;
+        }
+
+        if (!reasoningRaw) {
+            reasoningHost.replaceChildren();
+            reasoningHost.className = "plugin-agent-msg__reasoning-host";
+        } else if (!lute) {
+            reasoningHost.className = "plugin-agent-msg__reasoning-host";
+            reasoningHost.replaceChildren();
+            const pre = document.createElement("pre");
+            pre.className = "plugin-agent-msg__reasoning";
+            pre.textContent = reasoningRaw;
+            reasoningHost.append(pre);
+        } else {
+            reasoningHost.className =
+                "plugin-agent-msg__reasoning-host plugin-agent-msg__reasoning b3-typography b3-typography--default";
+            if (reasoningHost.querySelector(":scope > pre")) {
+                reasoningHost.replaceChildren();
+            }
+            // 正文一旦出现输出，将推理通道仍留在 tail 的 Markdown 一次性封存（幂等），避免 tail 每帧随 RAF 重绘
+            if (contentRaw.length > 0) {
+                finalizeStreamingMdRemainder(m, reasoningRaw, lute, "reasoning");
+            }
+            syncStreamingMdHost(reasoningHost, m, reasoningRaw, lute, "reasoning");
+        }
+
+        if (lute) {
+            const wasPlain = bodyEl.classList.contains("plugin-agent-msg__body--plain");
+            bodyEl.className = "plugin-agent-msg__body b3-typography b3-typography--default";
+            if (wasPlain) {
+                bodyEl.replaceChildren();
+            }
+            syncStreamingMdHost(bodyEl, m, contentRaw, lute, "content");
+        } else {
+            bodyEl.className = "plugin-agent-msg__body plugin-agent-msg__body--plain";
+            bodyEl.replaceChildren();
+            bodyEl.textContent = contentRaw;
+        }
+
+        if (toolsSig) {
+            toolsEl.hidden = false;
+            toolsEl.textContent = toolsSig;
+        } else {
+            toolsEl.hidden = true;
+            toolsEl.textContent = "";
+        }
+    }
+
+    function buildMessageRow(m: ChatMessage, lute: ReturnType<typeof getLuteOrNull>): HTMLElement {
+        if (m.role === "user") {
+            return buildUserRow(m);
+        }
+        if (m.role === "tool") {
+            return buildToolRow(m);
+        }
+        if (m.role === "assistant") {
+            const row = buildAssistantRow();
+            patchAssistantRow(row, m, lute);
+            return row;
+        }
+        const fallback = document.createElement("div");
+        fallback.className = "plugin-agent-msg";
+        fallback.textContent = m.role;
+        return fallback;
+    }
+
+    function patchMessageRow(row: HTMLElement, m: ChatMessage, lute: ReturnType<typeof getLuteOrNull>): void {
+        if (m.role === "user") {
+            patchUserRow(row, m);
+        } else if (m.role === "tool") {
+            patchToolRow(row, m);
+        } else if (m.role === "assistant") {
+            patchAssistantRow(row, m, lute);
+        }
+    }
+
+    function renderMessages(): void {
+        if (!chatMessages.length) {
+            renderEmptyMessagesPlaceholder();
+            elMessages.scrollTop = 0;
+            return;
+        }
+
+        elMessages.querySelector("[data-agent-placeholder]")?.remove();
+
+        const lute = getLuteOrNull();
+
+        while (elMessages.lastElementChild && elMessages.children.length > chatMessages.length) {
+            elMessages.removeChild(elMessages.lastElementChild);
+        }
+
+        for (let i = 0; i < chatMessages.length; i++) {
+            const m = chatMessages[i];
+            const slot = elMessages.children[i] as HTMLElement | undefined;
+            let row = rowByMessage.get(m);
+
+            if (row && slot === row) {
+                patchMessageRow(row, m, lute);
+                continue;
+            }
+
+            if (row && slot !== row) {
+                elMessages.insertBefore(row, slot ?? null);
+                patchMessageRow(row, m, lute);
+                continue;
+            }
+
+            row = buildMessageRow(m, lute);
+            rowByMessage.set(m, row);
+            if (slot) {
+                elMessages.replaceChild(row, slot);
+            } else {
+                elMessages.appendChild(row);
+            }
+        }
+
         elMessages.scrollTop = elMessages.scrollHeight;
     }
 

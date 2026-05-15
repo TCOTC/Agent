@@ -8,7 +8,7 @@ import type {
 } from "./types";
 
 /** 临时：每次流式 delta 回调后休眠（毫秒），便于观察 UI；设为 0 关闭 */
-const STREAM_DELTA_DEBUG_THROTTLE_MS = 120;
+const STREAM_DELTA_DEBUG_THROTTLE_MS = 0;
 
 function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
     if (ms <= 0) {

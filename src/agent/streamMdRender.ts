@@ -7,7 +7,8 @@
  * 块 DOM 经 Markdown 再输出为 HTML 的预览效果，且不经过 `protyle-wysiwyg` DOM。
  *
  * 流式优化：当文档根下已出现至少 2 个第一层块时，说明第一个块已完整，将其 Markdown 封存并
- * 只对新尾部反复解析，避免已稳定块重复走 Lute。
+ * 只对新尾部反复解析，避免已稳定块重复走 Lute。思考结束后一旦正文开始输出，可对推理文本调用
+ * `finalizeStreamingMdRemainder`，把仍留在尾部的 Markdown 一次性封存，避免推理区 tail 随正文 RAF 反复渲染。
  */
 import {getAllEditor} from "siyuan";
 import type {ChatMessage} from "./types";
@@ -63,6 +64,12 @@ export interface StreamMdCache {
     sealedLen: number;
     /** 与每一封存块顺序对应的预览 HTML 片段 */
     sealedHtmlParts: string[];
+}
+
+/** 供 DOM 增量挂载：已封存的顶层块 HTML 与未完成的尾部 HTML */
+export interface StreamingMdDomParts {
+    sealedHtmlParts: string[];
+    tailHtml: string;
 }
 
 const streamCacheContent = new WeakMap<ChatMessage, StreamMdCache>();
@@ -203,14 +210,44 @@ function resetCache(c: StreamMdCache): void {
 }
 
 /**
- * 将助手消息的一段 Markdown 流式渲染为预览 HTML；在 `msg` 上维护封存块缓存。
+ * 将当前尚未封存的尾部 Markdown 一次性并入封存区（`sealedLen` 直至 `fullMd.length`）。
+ * 在「思考已结束、正文开始输出」时用于推理通道，避免推理区 tail 在后续帧随正文同步反复渲染。
  */
-export function renderStreamingAssistantMd(
+export function finalizeStreamingMdRemainder(
     msg: ChatMessage,
     fullMd: string,
     lute: LuteEngine,
     kind: "content" | "reasoning" = "content",
-): string {
+): void {
+    const map = getCacheMap(kind);
+    let c = map.get(msg);
+    if (!c) {
+        c = {sealedLen: 0, sealedHtmlParts: []};
+        map.set(msg, c);
+    }
+
+    const prevPrefix = c.sealedLen > 0 ? fullMd.slice(0, c.sealedLen) : "";
+    if (fullMd.length < c.sealedLen || (c.sealedLen > 0 && !fullMd.startsWith(prevPrefix))) {
+        resetCache(c);
+    }
+
+    const tailMd = fullMd.slice(c.sealedLen);
+    if (!tailMd) {
+        return;
+    }
+    c.sealedHtmlParts.push(markdownToProtylePreviewHtml(lute, tailMd));
+    c.sealedLen = fullMd.length;
+}
+
+/**
+ * 更新流式 Markdown 缓存并返回「封存块 + 尾部」HTML，供 DOM 按块增量挂载。
+ */
+export function getStreamingAssistantMdParts(
+    msg: ChatMessage,
+    fullMd: string,
+    lute: LuteEngine,
+    kind: "content" | "reasoning" = "content",
+): StreamingMdDomParts {
     const map = getCacheMap(kind);
     let c = map.get(msg);
     if (!c) {
@@ -236,7 +273,23 @@ export function renderStreamingAssistantMd(
     }
 
     const tailHtml = markdownToProtylePreviewHtml(lute, tail);
-    return c.sealedHtmlParts.join("") + tailHtml;
+    return {
+        sealedHtmlParts: c.sealedHtmlParts.slice(),
+        tailHtml,
+    };
+}
+
+/**
+ * 将助手消息的一段 Markdown 流式渲染为预览 HTML（单字符串，会拼接全部块）；在 `msg` 上维护封存块缓存。
+ */
+export function renderStreamingAssistantMd(
+    msg: ChatMessage,
+    fullMd: string,
+    lute: LuteEngine,
+    kind: "content" | "reasoning" = "content",
+): string {
+    const p = getStreamingAssistantMdParts(msg, fullMd, lute, kind);
+    return p.sealedHtmlParts.join("") + p.tailHtml;
 }
 
 export function forgetStreamMdCache(msg: ChatMessage): void {

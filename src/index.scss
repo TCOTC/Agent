@@ -1,5 +1,8 @@
 .plugin-agent-dock-wrap {
   min-height: 0;
+  /** 覆盖 Dock 面板祖先上可能存在的 user-select: none，便于选中复制对话与日志 */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .plugin-agent-dock {
@@ -86,6 +89,32 @@
   &__body.b3-typography {
     font-size: 12px;
     line-height: 1.45;
+  }
+
+  &__body--plain {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--b3-font-family-code);
+    font-size: 12px;
+    color: var(--b3-theme-on-background);
+  }
+
+  &__reasoning-host:empty {
+    display: none;
+  }
+
+  /** 流式 Markdown：已封存的第一层块，innerHTML 仅写入一次 */
+  .plugin-agent-md-sealed {
+    display: block;
+  }
+
+  .plugin-agent-md-tail {
+    display: block;
+
+    &:empty {
+      display: none;
+    }
   }
 
   &__reasoning {
