@@ -17,7 +17,7 @@
 
 ---
 
-## 2. 实现要点（`streamMdRender.ts`，已更新）
+## 2. 实现要点（`render/streamMdRender.ts`，已更新）
 
 1. 用 Lute **`Md2BlockDOM(md, false)`** 得到 Block DOM HTML，统计**顶层子节点个数**。
 2. 对当前 **`tail`**：若整段顶层块数 **≥ 2**，尝试封存「第一块」。
@@ -54,7 +54,7 @@
 
 ---
 
-## 5. 讨论形成的改进方案（已在 `streamMdRender.ts` 实现）
+## 5. 讨论形成的改进方案（已在 `render/streamMdRender.ts` 实现）
 
 以下为已落地的**组合策略**，与原先「仅数块数 + 二分」相比更严、更贴近「前缀与整段解析一致」。
 
@@ -104,8 +104,10 @@
 
 ## 7. 实现时可对照的文件
 
-- `src/agent/streamMdRender.ts`：`getStreamingAssistantMdParts`、`finalizeStreamingMdRemainder`、`findSealLenFirstBlockAligned`、`getFirstBlockInnerFromMd`、`maxPrefixSingleTopBlockLen`、`countTopLevelBlockDivs`。
-- `src/agent/chatDock.ts`：`syncStreamingMdHost` 与封存 HTML 挂载逻辑。
+- `src/render/streamMdRender.ts`：`getStreamingAssistantMdParts`、`finalizeStreamingMdRemainder`、`findSealLenFirstBlockAligned`、`getFirstBlockInnerFromMd`、`maxPrefixSingleTopBlockLen`、`countTopLevelBlockDivs`。
+- `src/render/lute.ts`：`getLute`、与思源 setLute 对齐的 Lute 开关（供 `Md2BlockDOM` 封存边界；`window.Lute.New` 单例）。
+- `src/render/protyleBlockRender.ts`：`renderProtyleBlock(blocks, blocksRoot)`（多块块级渲染；子树含 `.code-block code` 时对 `blocksRoot` 调用一次 `highlightRender`）。
+- `src/dock.ts`：`syncStreamingMdHost` 与封存 HTML 挂载逻辑。
 
 ---
 
@@ -114,4 +116,7 @@
 | 日期 | 说明 |
 |------|------|
 | 2026-05-15 | 初稿：根据对话整理问题、成因与待实现方案要点。 |
-| 2026-05-15 | 在 `streamMdRender.ts` 实现首块 `innerHTML` 对齐 + `lastTailLen` 窄区间扫描；`finalize` 后重置 `lastTailLen`。 |
+| 2026-05-15 | 在 `render/streamMdRender.ts` 实现首块 `innerHTML` 对齐 + `lastTailLen` 窄区间扫描；`finalize` 后重置 `lastTailLen`。 |
+| 2026-05-15 | 目录调整：`streamMdRender` 等迁入 `src/render/`，Dock 逻辑迁至 `src/dock.ts`。 |
+| 2026-05-15 | Lute 抽取为 `lute.ts`；`agentProcessRender` 更名为 `protyleBlockRender` / `renderProtyleBlock`。 |
+| 2026-05-16 | `renderProtyleBlock` 合并原 `typographyPostRender`：参数 `blocks` + `blocksRoot`；仅当子树含 `.code-block code` 时 `highlightRender` 一次。 |

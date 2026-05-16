@@ -1,64 +1,22 @@
 /**
- * Markdown → HTML 走内核 `/api/lute/md2html`（`render: protyle-preview`）；插入 DOM 后由
- * `typographyPostRender` 与导出预览管线对齐。
+ * Markdown → HTML 走内核 `/api/lute/md2html`（`mode: protyle-preview`）；插入 DOM 后由
+ * `protyleBlockRender` 与导出预览管线对齐。
  *
  * 流式封存边界：先要求 `Md2BlockDOM` 顶层块数 ≥ 2，再用「整段 tail 与前缀 tail 的第一块
  * `innerHTML` 一致」对齐切点（忽略块根 `id` 等属性差异），避免仅在反引号等处块数跳变导致的误切分。
  * 搜索顺序：优先在「相对上一帧 tail 长度的新增区间」内从 `hi` 向下扫描，未命中再扫其余区间。
  * 详见 `docs/流式-Markdown-封存策略讨论.md`。
  *
- * 思源客户端内 Lute 总可用（优先编辑器 Protyle，否则 `window.Lute.New`）。
+ * 流式封存用的 Lute 单例见 `lute.ts` 的 `getLuteResult`。
  *
  * 流式优化：当可对齐封存第一层块时，将其 Markdown 封存并只对新尾部反复请求 md2html。
  * 思考结束后一旦正文开始输出，可对推理文本调用 `finalizeStreamingMdRemainder`，把仍留在尾部的
  * Markdown 一次性封存，避免推理区 tail 随正文 RAF 反复渲染。
  */
-import {fetchSyncPost, getAllEditor} from "siyuan";
-import type {ChatMessage} from "./types";
-
-interface LuteGlobalNs {
-    New(options?: unknown): LuteEngine;
-}
-
-/** 仅用于 `Md2BlockDOM` 流式封存边界；HTML 已全部走 `markdownToProtylePreviewHtml`（内核 md2html）。 */
-export interface LuteEngine {
-    Md2BlockDOM(markdown: string, reserveEmptyParagraph?: boolean): string;
-    SetSpin?(v: boolean): void;
-    SetProtyleWYSIWYG?(v: boolean): void;
-    SetProtyleMarkNetImg?(v: boolean): void;
-    SetHeadingID?(v: boolean): void;
-    SetYamlFrontMatter?(v: boolean): void;
-    SetFootnotes?(v: boolean): void;
-    SetToC?(v: boolean): void;
-    SetIndentCodeBlock?(v: boolean): void;
-    SetParagraphBeginningSpace?(v: boolean): void;
-    SetSetext?(v: boolean): void;
-    SetLinkRef?(v: boolean): void;
-    SetSanitize?(v: boolean): void;
-    SetKramdownIAL?(v: boolean): void;
-    SetTag?(v: boolean): void;
-    SetSuperBlock?(v: boolean): void;
-    SetImgPathAllowSpace?(v: boolean): void;
-    SetBlockRef?(v: boolean): void;
-    SetFileAnnotationRef?(v: boolean): void;
-    SetMark?(v: boolean): void;
-    SetSup?(v: boolean): void;
-    SetSub?(v: boolean): void;
-    SetInlineMathAllowDigitAfterOpenMarker?(v: boolean): void;
-    SetHTMLTag2TextMark?(v: boolean): void;
-    SetTextMark?(v: boolean): void;
-    SetUnorderedListMarker?(m: string): void;
-    SetDataTask?(v: boolean): void;
-    SetExportNormalizeTaskListMarker?(v: boolean): void;
-    SetArbitraryTaskListItemMarker?(v: boolean): void;
-    SetCallout?(v: boolean): void;
-    SetSpellcheck?(v: boolean): void;
-    SetInlineAsterisk?(v: boolean): void;
-    SetInlineUnderscore?(v: boolean): void;
-    SetInlineMath?(v: boolean): void;
-    SetGFMStrikethrough1?(v: boolean): void;
-    SetGFMStrikethrough?(v: boolean): void;
-}
+import {postKernelJson} from "../kernelPostJson";
+import {logger} from "../util";
+import type {ChatMessage} from "../agent/types";
+import type {LuteEngine} from "./lute";
 
 export interface StreamMdCache {
     /** 已封存的前缀字符长度，与 fullMd.slice(0, sealedLen) 对应 */
@@ -81,6 +39,13 @@ export interface StreamingMdDomParts {
 const streamCacheContent = new WeakMap<ChatMessage, StreamMdCache>();
 const streamCacheReasoning = new WeakMap<ChatMessage, StreamMdCache>();
 
+/** 将 HTML 写入 `template.content`，供统计顶层子元素或读取首块共用 */
+function fragmentFromTrimmedHtml(html: string): DocumentFragment {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html.trim();
+    return tpl.content;
+}
+
 function getCacheMap(kind: "content" | "reasoning"): WeakMap<ChatMessage, StreamMdCache> {
     return kind === "reasoning" ? streamCacheReasoning : streamCacheContent;
 }
@@ -91,9 +56,7 @@ function countTopLevelBlockDivs(lute: LuteEngine, md: string): number {
         return 0;
     }
     const h = lute.Md2BlockDOM(md, false);
-    const tpl = document.createElement("template");
-    tpl.innerHTML = h.trim();
-    return tpl.content.children.length;
+    return fragmentFromTrimmedHtml(h).children.length;
 }
 
 /**
@@ -123,13 +86,11 @@ function maxPrefixSingleTopBlockLen(lute: LuteEngine, md: string): number {
 
 /** 取 `Md2BlockDOM` 顶层第一个块的内容 HTML（不含块根属性，等价于首块 `innerHTML`）。 */
 function getFirstBlockInnerFromMd2BlockDomHtml(html: string): string | null {
-    const trimmed = html.trim();
-    if (!trimmed) {
+    if (!html.trim()) {
         return null;
     }
-    const tpl = document.createElement("template");
-    tpl.innerHTML = trimmed;
-    const first = tpl.content.firstElementChild;
+    const frag = fragmentFromTrimmedHtml(html);
+    const first = frag.firstElementChild;
     if (!first) {
         return null;
     }
@@ -188,82 +149,20 @@ function findSealLenFirstBlockAligned(
     return 0;
 }
 
-function configureFallbackLute(engine: LuteEngine): void {
-    // 与思源 setLute 对齐的主要开关，使 `window.Lute.New` 实例的 `Md2BlockDOM` 与编辑器块边界一致（此处不做任何 HTML 渲染）
-    engine.SetSpin?.(true);
-    engine.SetProtyleWYSIWYG?.(true);
-    engine.SetFileAnnotationRef?.(true);
-    engine.SetHTMLTag2TextMark?.(true);
-    engine.SetTextMark?.(true);
-    engine.SetHeadingID?.(false);
-    engine.SetYamlFrontMatter?.(false);
-    engine.SetInlineMathAllowDigitAfterOpenMarker?.(true);
-    engine.SetToC?.(false);
-    engine.SetIndentCodeBlock?.(false);
-    engine.SetParagraphBeginningSpace?.(true);
-    engine.SetSetext?.(false);
-    engine.SetFootnotes?.(false);
-    engine.SetLinkRef?.(false);
-    engine.SetSanitize?.(true);
-    engine.SetKramdownIAL?.(true);
-    engine.SetTag?.(true);
-    engine.SetSuperBlock?.(true);
-    engine.SetCallout?.(true);
-    engine.SetBlockRef?.(true);
-    engine.SetImgPathAllowSpace?.(true);
-    engine.SetUnorderedListMarker?.("-");
-    engine.SetDataTask?.(true);
-    engine.SetExportNormalizeTaskListMarker?.(true);
-    engine.SetArbitraryTaskListItemMarker?.(true);
-    const cfg = (window as unknown as {siyuan?: {config?: {editor?: {
-        spellcheck?: boolean;
-        displayNetImgMark?: boolean;
-        markdown?: Record<string, boolean>;
-    }}}}).siyuan?.config?.editor;
-    if (cfg) {
-        engine.SetSpellcheck?.(Boolean(cfg.spellcheck));
-        engine.SetProtyleMarkNetImg?.(Boolean(cfg.displayNetImgMark));
-        const md = cfg.markdown ?? {};
-        engine.SetInlineAsterisk?.(Boolean(md.inlineAsterisk));
-        engine.SetInlineUnderscore?.(Boolean(md.inlineUnderscore));
-        engine.SetSup?.(Boolean(md.inlineSup));
-        engine.SetSub?.(Boolean(md.inlineSub));
-        engine.SetTag?.(Boolean(md.inlineTag));
-        engine.SetInlineMath?.(Boolean(md.inlineMath));
-        engine.SetGFMStrikethrough1?.(false);
-        engine.SetGFMStrikethrough?.(Boolean(md.inlineStrikethrough));
-        engine.SetMark?.(Boolean(md.inlineMark));
-    } else {
-        engine.SetInlineMath?.(true);
-    }
-}
-
-function getLuteEngine(): LuteEngine {
-    const eds = getAllEditor();
-    const fromEditor = eds[0]?.protyle?.lute as LuteEngine | undefined;
-    if (fromEditor) {
-        return fromEditor;
-    }
-    const LuteNs = (window as unknown as {Lute?: LuteGlobalNs}).Lute;
-    if (!LuteNs?.New) {
-        throw new Error("[Agent] Lute 不可用：请在思源笔记客户端中使用本插件。");
-    }
-    const engine = LuteNs.New(undefined) as LuteEngine;
-    configureFallbackLute(engine);
-    return engine;
-}
-
 /**
  * Markdown → 可在 `b3-typography` 中使用的 HTML 片段（innerHTML，勿包 `protyle-wysiwyg`）。
- * 由内核 `/api/lute/md2html` + `render: protyle-preview` 生成。
+ * 由内核 `/api/lute/md2html` + `mode: protyle-preview` 生成。
  */
 export async function markdownToProtylePreviewHtml(md: string): Promise<string> {
     if (!md.trim()) {
         return "";
     }
-    const res = await fetchSyncPost("/api/lute/md2html", {markdown: md, render: "protyle-preview"});
+    const res = await postKernelJson<{html?: unknown}>("/api/lute/md2html", {
+        markdown: md,
+        mode: "protyle-preview",
+    });
     if (res.code !== 0 || res.data == null) {
-        console.warn("[Agent] /api/lute/md2html failed:", res.msg);
+        logger.warn("/api/lute/md2html failed:", res.msg);
         return "";
     }
     const html = (res.data as {html?: unknown}).html;
@@ -369,9 +268,4 @@ export async function renderStreamingAssistantMd(
 export function forgetStreamMdCache(msg: ChatMessage): void {
     streamCacheContent.delete(msg);
     streamCacheReasoning.delete(msg);
-}
-
-/** 供流式 `Md2BlockDOM` 封存用；与 `markdownToProtylePreviewHtml` 无耦合。 */
-export function getMd2BlockDomLute(): LuteEngine {
-    return getLuteEngine();
 }

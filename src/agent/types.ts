@@ -19,6 +19,43 @@ export interface ToolDefinition {
     source: ToolSource;
 }
 
+export const BUILTIN_TOOL_NAMES = [
+    "siyuan_get_block_info",
+    "siyuan_read_doc",
+    "siyuan_search_blocks",
+    "siyuan_append_markdown",
+    "siyuan_update_markdown",
+    "siyuan_sql_query",
+] as const;
+
+export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
+
+export function isBuiltinToolName(name: string): name is BuiltinToolName {
+    return (BUILTIN_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+/** 内置工具一条定义（`name` 为 {@link BuiltinToolName}） */
+export interface BuiltinToolDefinition extends Omit<ToolDefinition, "name" | "source"> {
+    name: BuiltinToolName;
+    source: "builtin";
+}
+
+/** OpenAI `chat.completions` 中 `message.tool_calls[].function`（`name` 未必是 {@link BuiltinToolName}） */
+export interface OpenAiToolFunctionPayload {
+    name: string;
+    arguments: string;
+}
+
+/** 单条 `tool_call`（assistant message 与流式快照共用） */
+export interface OpenAiToolCallChunk {
+    id: string;
+    type: "function";
+    function: OpenAiToolFunctionPayload;
+}
+
+/** 流式 delta 按 `index` 合并时的累积结构 */
+export type OpenAiToolStreamAccumPart = {id: string;} & OpenAiToolFunctionPayload;
+
 /** 与 UI 解耦的审计事件，供 Activity 面板演进 */
 export type AuditEvent =
     | {
@@ -72,26 +109,7 @@ export interface OpenAICompatibleConfig {
     model: string;
 }
 
-export interface AgentStoredSettings {
-    baseUrl: string;
-    apiKey: string;
-    model: string;
-    /** 是否注册 SQL 工具（仍每次 confirm） */
-    allowSqlTool: boolean;
-}
-
-export interface AgentStoredWorkset {
-    /** 文档根块 ID 列表（显式工作集） */
-    rootIds: string[];
-}
-
 export type ChatRole = "system" | "user" | "assistant" | "tool";
-
-export interface ToolCallLite {
-    id: string;
-    name: string;
-    arguments: string;
-}
 
 export interface ChatMessage {
     role: ChatRole;
@@ -102,10 +120,6 @@ export interface ChatMessage {
      * 见 https://api-docs.deepseek.com/guides/thinking_mode
      */
     reasoning_content?: string | null;
-    tool_calls?: Array<{
-        id: string;
-        type: "function";
-        function: {name: string; arguments: string;};
-    }>;
+    tool_calls?: OpenAiToolCallChunk[];
     tool_call_id?: string;
 }

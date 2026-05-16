@@ -5,31 +5,51 @@ import {
 import type {
     ChatMessage,
     OpenAICompatibleConfig,
+    OpenAiToolCallChunk,
+    OpenAiToolStreamAccumPart,
 } from "./types";
 
 /** 临时：每次流式 delta 回调后休眠（毫秒），便于观察 UI；设为 0 关闭 */
 const STREAM_DELTA_DEBUG_THROTTLE_MS = 0;
 
+/**
+ * 临时调试：为 true 时请求不带 tools；`agentLoop.ts` 同步不注入系统提示。
+ * 改这一处即可。
+ */
+export const LLM_DEBUG_PLAIN_CHAT = false;
+
+/** 休眠或在中止时提前结束（不抛错，由外层读循环根据 `signal` 收尾） */
 function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
     if (ms <= 0) {
         return Promise.resolve();
     }
-    return new Promise((resolve, reject) => {
-        if (signal.aborted) {
-            reject(new Error("aborted"));
-            return;
-        }
+    if (signal.aborted) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => {
         const t = setTimeout(() => {
             signal.removeEventListener("abort", onAbort);
             resolve();
         }, ms);
         const onAbort = () => {
             clearTimeout(t);
-            reject(new Error("aborted"));
+            resolve();
         };
         signal.addEventListener("abort", onAbort, {once: true});
     });
 }
+
+/** 单次 chat/completions（流式）的可预期失败，不作为异常向上抛 */
+export type AgentLlmFailure =
+    | {kind: "aborted"}
+    | {kind: "no_response_body"}
+    | {kind: "invalid_openai_response"}
+    | {kind: "http_error"; status: number; bodySnippet: string}
+    | {kind: "network_error"; message: string};
+
+export type OpenAIChatCompletionOutcome =
+    | {ok: true; result: ChatCompletionResult}
+    | {ok: false; failure: AgentLlmFailure};
 
 export interface ChatCompletionResult {
     message: {
@@ -37,11 +57,7 @@ export interface ChatCompletionResult {
         content: string | null;
         /** DeepSeek thinking mode，需写回下一轮 messages */
         reasoning_content?: string | null;
-        tool_calls?: Array<{
-            id: string;
-            type: "function";
-            function: {name: string; arguments: string;};
-        }>;
+        tool_calls?: OpenAiToolCallChunk[];
     };
     finish_reason?: string;
     usage?: Record<string, unknown>;
@@ -58,7 +74,7 @@ interface StreamAccum {
     content: string;
     reasoning: string;
     /** 按 OpenAI stream 的 index 合并分片 */
-    toolParts: Map<number, {id: string; name: string; arguments: string;}>;
+    toolParts: Map<number, OpenAiToolStreamAccumPart>;
     finishReason?: string;
 }
 
@@ -134,15 +150,11 @@ function applyStreamDelta(a: StreamAccum, delta: Record<string, unknown>): void 
 }
 
 async function readChatCompletionSse(
-    res: Response,
+    stream: ReadableStream<Uint8Array>,
     signal: AbortSignal,
     onEvent: (obj: Record<string, unknown>) => void | Promise<void>,
-): Promise<void> {
-    const body = res.body;
-    if (!body) {
-        throw new Error("no_response_body");
-    }
-    const reader = body.getReader();
+): Promise<"ok" | "aborted"> {
+    const reader = stream.getReader();
     const decoder = new TextDecoder();
     let carry = "";
     try {
@@ -150,7 +162,7 @@ async function readChatCompletionSse(
             const {done, value} = await reader.read();
             if (signal.aborted) {
                 await reader.cancel();
-                throw new Error("aborted");
+                return "aborted";
             }
             if (done) {
                 break;
@@ -167,6 +179,7 @@ async function readChatCompletionSse(
     } finally {
         reader.releaseLock();
     }
+    return "ok";
 }
 
 async function parseSseLine(
@@ -243,32 +256,48 @@ function sanitizeForApi(m: ChatMessage): Record<string, unknown> {
 export async function openAIChatCompletion(
     cfg: OpenAICompatibleConfig,
     messages: ChatMessage[],
-    allowSqlTool: boolean,
     signal: AbortSignal,
     onStreamDelta?: (snapshot: ChatCompletionStreamSnapshot) => void,
-): Promise<ChatCompletionResult> {
-    const tools = toolsToOpenAIFormat(getBuiltinToolDefinitions(allowSqlTool));
+): Promise<OpenAIChatCompletionOutcome> {
     const url = joinUrl(cfg.baseUrl, "chat/completions");
-    const body = {
+    const body: Record<string, unknown> = {
         model: cfg.model,
         messages: messages.map(sanitizeForApi),
-        tools,
-        tool_choice: "auto",
         temperature: 0.2,
         stream: true,
     };
-    const res = await fetch(url, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${cfg.apiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal,
-    });
+    if (!LLM_DEBUG_PLAIN_CHAT) {
+        body.tools = toolsToOpenAIFormat(getBuiltinToolDefinitions());
+        body.tool_choice = "auto";
+    }
+    let res: Response;
+    try {
+        res = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${cfg.apiKey}`,
+            },
+            body: JSON.stringify(body),
+            signal,
+        });
+    } catch (e) {
+        if (signal.aborted || (e instanceof DOMException && e.name === "AbortError")) {
+            return {ok: false, failure: {kind: "aborted"}};
+        }
+        const message = e instanceof Error ? e.message : String(e);
+        return {ok: false, failure: {kind: "network_error", message}};
+    }
     if (!res.ok) {
         const t = await res.text();
-        throw new Error(`HTTP ${res.status}: ${t.slice(0, 500)}`);
+        return {
+            ok: false,
+            failure: {kind: "http_error", status: res.status, bodySnippet: t.slice(0, 500)},
+        };
+    }
+    const streamBody = res.body;
+    if (!streamBody) {
+        return {ok: false, failure: {kind: "no_response_body"}};
     }
     const accum: StreamAccum = {
         content: "",
@@ -277,7 +306,7 @@ export async function openAIChatCompletion(
     };
     let usage: Record<string, unknown> | undefined;
 
-    await readChatCompletionSse(res, signal, async (obj) => {
+    const sse = await readChatCompletionSse(streamBody, signal, async (obj) => {
         const u = obj.usage;
         if (u && typeof u === "object") {
             usage = u as Record<string, unknown>;
@@ -301,6 +330,9 @@ export async function openAIChatCompletion(
             await sleepAbortable(STREAM_DELTA_DEBUG_THROTTLE_MS, signal);
         }
     });
+    if (sse === "aborted") {
+        return {ok: false, failure: {kind: "aborted"}};
+    }
 
     const message = accumToMessage(accum);
     const hasTools = Boolean(message.tool_calls?.length);
@@ -309,11 +341,14 @@ export async function openAIChatCompletion(
             (message.reasoning_content && message.reasoning_content.length > 0),
     );
     if (!hasTools && !hasText) {
-        throw new Error("invalid_openai_response");
+        return {ok: false, failure: {kind: "invalid_openai_response"}};
     }
     return {
-        message,
-        finish_reason: accum.finishReason,
-        usage,
+        ok: true,
+        result: {
+            message,
+            finish_reason: accum.finishReason,
+            usage,
+        },
     };
 }

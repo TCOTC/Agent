@@ -74,7 +74,7 @@
           <tr>
             <td><code>siyuan_sql_query</code></td>
             <td>SQL</td>
-            <td>每次 SQL 确认；且需在设置中开启 <code>allowSqlTool</code></td>
+            <td>每次 SQL 确认；插件侧 <code>assertReadonlySqlStmt</code> 拒绝非只读语句</td>
             <td><code>POST /api/query/sql</code></td>
           </tr>
         </tbody>
@@ -116,7 +116,7 @@
 
       <h2><code>siyuan_sql_query</code></h2>
       <ul>
-        <li><strong>前置：</strong><code>allowSqlTool</code> 为真才会出现在模型工具列表；内核侧仍有权限与行数限制（见思源文档）。</li>
+        <li><strong>前置：</strong><code>siyuan_sql_query</code> 始终出现在模型工具列表；提交内核前由 <code>assertReadonlySqlStmt</code> 校验只读；内核侧仍有权限与行数限制（见思源文档）。</li>
         <li><strong>确认：</strong>弹窗展示 SQL 片段（最长约 800 字符）。</li>
       </ul>
 

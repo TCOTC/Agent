@@ -64,7 +64,7 @@
       <h2>本 demo 插件一句话概括</h2>
       <p>
         在思源进程内，用浏览器 <code>fetch</code> 调用「OpenAI 兼容」的 <code>chat/completions</code> 接口，
-        把模型返回的 <code>tool_calls</code> 交给本地 TypeScript 执行；执行层通过 <code>fetchSyncPost</code>
+        把模型返回的 <code>tool_calls</code> 交给本地 TypeScript 执行；执行层通过标准 <code>fetch</code>（<code>postKernelJson</code>）
         访问思源内核 REST API，且所有写操作与可选 SQL 都经用户弹窗确认；可访问的文档范围由用户显式维护的「工作集」限定。
       </p>
 

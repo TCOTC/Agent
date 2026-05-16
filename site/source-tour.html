@@ -44,8 +44,24 @@
             <td>插件类 <code>Agent</code>：<code>onload</code> 注册 Dock 与设置；<code>onLayoutReady</code> 加载设置；<code>uninstall</code> 清理存储。</td>
           </tr>
           <tr>
-            <td><code>agent/chatDock.ts</code></td>
-            <td>挂载 Dock UI、工作集 CRUD 展示、聊天渲染、发送 / 停止、调用 <code>runAgentLoop</code>。</td>
+            <td><code>dock.ts</code></td>
+            <td>挂载 Dock UI、工作集 CRUD 展示、聊天渲染、发送 / 停止、调用 <code>runAgentLoop</code>；流式 Markdown 通过 <code>render/</code> 模块。</td>
+          </tr>
+          <tr>
+            <td><code>render/streamMdRender.ts</code></td>
+            <td>流式 Markdown 封存算法、内核 <code>md2html</code>、WeakMap 缓存；<code>LuteEngine</code> 由调用方从 <code>render/lute.ts</code> 取得后传入。</td>
+          </tr>
+          <tr>
+            <td><code>render/lute.ts</code></td>
+            <td><code>getLute</code>：流式封存用的 Lute 单例（<code>window.Lute.New</code> + 与 setLute 对齐的开关）。</td>
+          </tr>
+          <tr>
+            <td><code>render/protyleBlockRender.ts</code></td>
+            <td><code>renderProtyleBlock(blocks, blocksRoot)</code>：<code>blocks</code> 为可迭代预览块根（单块用 <code>[el]</code>）；<code>blocksRoot</code> 为带 <code>b3-typography</code> 的根容器；子树含预览代码块时对其做一次 <code>highlightRender</code>。</td>
+          </tr>
+          <tr>
+            <td><code>util.ts</code></td>
+            <td><code>confirmPromise</code>：思源同步 <code>confirm</code> 的 Promise 封装。</td>
           </tr>
           <tr>
             <td><code>agent/agentLoop.ts</code></td>
@@ -61,19 +77,23 @@
           </tr>
           <tr>
             <td><code>agent/kernelExecutor.ts</code></td>
-            <td><code>createFetchSyncKernelExecutor</code>：<code>fetchSyncPost</code> 适配 <code>KernelExecutor</code>。</td>
+            <td><code>createFetchSyncKernelExecutor</code>：<code>postKernelJson</code> 适配 <code>KernelExecutor</code>。</td>
           </tr>
           <tr>
-            <td><code>agent/storage.ts</code></td>
-            <td>存储键常量、默认值、<code>normalizeSettings</code> / <code>normalizeWorkset</code>。</td>
+            <td><code>settings/storage.ts</code></td>
+            <td><code>settings.json</code> 键名、默认值、<code>normalizeSettings</code>。</td>
+          </tr>
+          <tr>
+            <td><code>settings/types.ts</code></td>
+            <td>持久化配置类型 <code>PersistedSettings</code>（不限于 Agent）。</td>
+          </tr>
+          <tr>
+            <td><code>settings/settingPanel.ts</code></td>
+            <td>思源 <code>Setting</code> 设置面板表单项与确认保存逻辑。</td>
           </tr>
           <tr>
             <td><code>agent/types.ts</code></td>
-            <td>共享类型：<code>ToolDefinition</code>、<code>AuditEvent</code>、<code>KernelExecutor</code>、<code>ChatMessage</code> 等。</td>
-          </tr>
-          <tr>
-            <td><code>agent/confirmUtil.ts</code></td>
-            <td><code>confirmPromise</code>：思源同步 <code>confirm</code> 的 Promise 封装。</td>
+            <td>Agent 运行时类型：<code>ToolDefinition</code>、<code>AuditEvent</code>、<code>KernelExecutor</code>、<code>ChatMessage</code> 等。</td>
           </tr>
           <tr>
             <td><code>index.scss</code></td>
@@ -91,7 +111,7 @@
       <p><strong>主要参数（<code>RunAgentLoopParams</code>）：</strong></p>
       <ul>
         <li><code>llm</code>：<code>baseUrl</code>、<code>apiKey</code>、<code>model</code>。</li>
-        <li><code>allowSqlTool</code>：是否把 SQL 工具加入模型可见工具列表。</li>
+        <li><code>siyuan_sql_query</code>：始终向模型注册；执行前由 <code>assertReadonlySqlStmt</code> 校验只读，通过后每次仍弹窗确认。</li>
         <li><code>worksetRootIds</code>：<code>Set&lt;string&gt;</code>，工具层用于鉴权。</li>
         <li><code>messages</code>：对话历史，函数会<strong>原地</strong> push user / assistant / tool（不含每轮临时拼上的 system）。</li>
         <li><code>userText</code>：本轮用户输入。</li>
@@ -125,13 +145,13 @@
         <code>content</code>。
       </p>
 
-      <h2><code>mountAgentDock</code>（<code>agent/chatDock.ts</code>）</h2>
+      <h2><code>mountDockPanel</code>（<code>dock.ts</code>）</h2>
       <p>
         参数为 <code>(plugin, dockElement)</code>。负责：初始 HTML 模板、加载设置与工作集、渲染消息列表、绑定发送与停止、
         在发送路径组装 <code>runAgentLoop</code> 参数。移动端与桌面 Dock 外壳由 <code>index.ts</code> 区分，但挂载点均传入此函数。
       </p>
 
-      <h2><code>normalizeSettings</code> / <code>normalizeWorkset</code></h2>
+      <h2><code>normalizeSettings</code></h2>
       <p>从持久化读出的弱类型 JSON 规整为稳定结构，避免字段缺失导致运行期异常。</p>
 
       <h2><code>confirmPromise</code></h2>

@@ -1,6 +1,8 @@
-import {confirmPromise} from "./confirmUtil";
+import {confirmPromise} from "../util";
 import type {
     AuditEvent,
+    BuiltinToolDefinition,
+    BuiltinToolName,
     KernelExecutor,
     ToolDefinition,
 } from "./types";
@@ -9,20 +11,18 @@ const MAX_DOC_SNIPPET = 14_000;
 
 export interface RunBuiltinToolContext {
     kernel: KernelExecutor;
-    worksetRootIds: Set<string>;
-    allowSqlTool: boolean;
     onAudit: (e: AuditEvent) => void;
     /** 写工具二次确认 */
     confirmWrite: (detail: string) => Promise<boolean>;
 }
 
 /** 内置 Tool 的 OpenAI JSON Schema + 风险元数据 */
-export function getBuiltinToolDefinitions(allowSql: boolean): ToolDefinition[] {
-    const base: ToolDefinition[] = [
+export function getBuiltinToolDefinitions(): BuiltinToolDefinition[] {
+    return [
         {
             name: "siyuan_get_block_info",
             description:
-                "根据块 ID 获取 box、path、rootID、rootTitle 等元数据。仅允许访问工作集中的文档（rootID 在工作集内）。",
+                "根据块 ID 获取 box、path、rootID、rootTitle 等元数据。",
             parameters: {
                 type: "object",
                 properties: {
@@ -37,7 +37,7 @@ export function getBuiltinToolDefinitions(allowSql: boolean): ToolDefinition[] {
         {
             name: "siyuan_read_doc",
             description:
-                "读取文档内容（HTML 片段，与编辑器动态加载一致）。仅允许 rootID 属于工作集。返回内容可能被截断。",
+                "读取文档内容（HTML 片段，与编辑器动态加载一致）。id 为文档根块 ID。返回内容可能被截断。",
             parameters: {
                 type: "object",
                 properties: {
@@ -51,7 +51,7 @@ export function getBuiltinToolDefinitions(allowSql: boolean): ToolDefinition[] {
         },
         {
             name: "siyuan_search_blocks",
-            description: "在当前工作集路径范围内全文搜索块。query 为关键词；method 0 关键字、1 查询语法、3 正则。",
+            description: "在当前工作空间内全文搜索块。query 为关键词；method 0 关键字、1 查询语法、3 正则。",
             parameters: {
                 type: "object",
                 properties: {
@@ -68,7 +68,7 @@ export function getBuiltinToolDefinitions(allowSql: boolean): ToolDefinition[] {
         },
         {
             name: "siyuan_append_markdown",
-            description: "在指定父块下追加 Markdown 子块。父块所在文档必须在工作集中。",
+            description: "在指定父块下追加 Markdown 子块。",
             parameters: {
                 type: "object",
                 properties: {
@@ -83,7 +83,7 @@ export function getBuiltinToolDefinitions(allowSql: boolean): ToolDefinition[] {
         },
         {
             name: "siyuan_update_markdown",
-            description: "用 Markdown 更新指定块内容。该块所在文档必须在工作集中。",
+            description: "用 Markdown 更新指定块内容。",
             parameters: {
                 type: "object",
                 properties: {
@@ -96,19 +96,14 @@ export function getBuiltinToolDefinitions(allowSql: boolean): ToolDefinition[] {
             needsWriteConfirm: true,
             source: "builtin",
         },
-    ];
-    if (!allowSql) {
-        return base;
-    }
-    return [
-        ...base,
         {
             name: "siyuan_sql_query",
-            description: "执行只读 SQL（内核限制行数）。需要管理员权限与用户在设置中开启；每次调用仍会弹窗确认。",
+            description:
+                "执行只读 SQL（内核限制行数）。仅允许 SELECT、WITH … SELECT、VALUES、EXPLAIN … SELECT 等读语句；写语句会被插件拒绝。需要思源管理员权限；每次调用仍会弹窗确认。",
             parameters: {
                 type: "object",
                 properties: {
-                    stmt: {type: "string", description: "SQL 语句"},
+                    stmt: {type: "string", description: "只读 SQL 语句"},
                 },
                 required: ["stmt"],
             },
@@ -119,7 +114,7 @@ export function getBuiltinToolDefinitions(allowSql: boolean): ToolDefinition[] {
     ];
 }
 
-export function toolsToOpenAIFormat(defs: ToolDefinition[]) {
+export function toolsToOpenAIFormat<D extends ToolDefinition>(defs: readonly D[]) {
     return defs.map((d) => ({
         type: "function" as const,
         function: {
@@ -130,7 +125,7 @@ export function toolsToOpenAIFormat(defs: ToolDefinition[]) {
     }));
 }
 
-async function ensureRootInWorkset(
+async function resolveBlockRoot(
     ctx: RunBuiltinToolContext,
     blockId: string,
 ): Promise<{ok: true; rootId: string;} | {ok: false; error: string;}> {
@@ -143,26 +138,7 @@ async function ensureRootInWorkset(
     if (!rootId) {
         return {ok: false, error: "missing rootID"};
     }
-    if (!ctx.worksetRootIds.has(rootId)) {
-        return {ok: false, error: "not_in_workset: 请先将文档加入工作集"};
-    }
     return {ok: true, rootId};
-}
-
-async function collectSearchPaths(ctx: RunBuiltinToolContext): Promise<string[]> {
-    const paths: string[] = [];
-    for (const rootId of ctx.worksetRootIds) {
-        const r = await ctx.kernel.post("/api/block/getBlockInfo", {id: rootId});
-        if (r.code !== 0) {
-            continue;
-        }
-        const d = r.data as Record<string, string>;
-        if (d?.box && d?.path) {
-            const p = d.path.startsWith("/") ? `${d.box}${d.path}` : `${d.box}/${d.path}`;
-            paths.push(p);
-        }
-    }
-    return paths;
 }
 
 function parseArgs(raw: string): Record<string, unknown> {
@@ -176,7 +152,7 @@ function parseArgs(raw: string): Record<string, unknown> {
 
 export async function runBuiltinTool(
     ctx: RunBuiltinToolContext,
-    name: string,
+    name: BuiltinToolName,
     argsJson: string,
 ): Promise<string> {
     const args = parseArgs(argsJson);
@@ -186,10 +162,6 @@ export async function runBuiltinTool(
         if (!id) {
             return JSON.stringify({error: "missing id"});
         }
-        const gate = await ensureRootInWorkset(ctx, id);
-        if (!gate.ok) {
-            return JSON.stringify({error: gate.error});
-        }
         const r = await ctx.kernel.post("/api/block/getBlockInfo", {id});
         return JSON.stringify({code: r.code, data: r.data, msg: r.msg});
     }
@@ -198,9 +170,6 @@ export async function runBuiltinTool(
         const id = String(args.id ?? "");
         if (!id) {
             return JSON.stringify({error: "missing id"});
-        }
-        if (!ctx.worksetRootIds.has(id)) {
-            return JSON.stringify({error: "read_doc 仅允许传入工作集中的文档根 ID"});
         }
         const r = await ctx.kernel.post("/api/filetree/getDoc", {
             id,
@@ -232,19 +201,12 @@ export async function runBuiltinTool(
         if (!query) {
             return JSON.stringify({error: "missing query"});
         }
-        if (ctx.worksetRootIds.size === 0) {
-            return JSON.stringify({error: "工作集为空，无法限定搜索范围"});
-        }
-        const paths = await collectSearchPaths(ctx);
-        if (paths.length === 0) {
-            return JSON.stringify({error: "无法解析工作集路径"});
-        }
         const page = typeof args.page === "number" ? args.page : 1;
         const pageSize = typeof args.pageSize === "number" ? args.pageSize : 16;
         const method = typeof args.method === "number" ? args.method : 0;
         const r = await ctx.kernel.post("/api/search/fullTextSearchBlock", {
             query,
-            paths,
+            paths: [],
             page,
             pageSize,
             method,
@@ -258,8 +220,8 @@ export async function runBuiltinTool(
         if (!parentId || !markdown) {
             return JSON.stringify({error: "missing parent_id or markdown"});
         }
-        const gate = await ensureRootInWorkset(ctx, parentId);
-        if (!gate.ok) {
+        const gate = await resolveBlockRoot(ctx, parentId);
+        if (gate.ok === false) {
             return JSON.stringify({error: gate.error});
         }
         const okAppend = await ctx.confirmWrite(
@@ -282,8 +244,8 @@ export async function runBuiltinTool(
         if (!id || !markdown) {
             return JSON.stringify({error: "missing id or markdown"});
         }
-        const gate = await ensureRootInWorkset(ctx, id);
-        if (!gate.ok) {
+        const gate = await resolveBlockRoot(ctx, id);
+        if (gate.ok === false) {
             return JSON.stringify({error: gate.error});
         }
         const ok = await ctx.confirmWrite(`update_markdown id=${id} len=${markdown.length}`);
@@ -299,9 +261,6 @@ export async function runBuiltinTool(
     }
 
     if (name === "siyuan_sql_query") {
-        if (!ctx.allowSqlTool) {
-            return JSON.stringify({error: "sql_disabled_in_settings"});
-        }
         const stmt = String(args.stmt ?? "");
         if (!stmt) {
             return JSON.stringify({error: "missing stmt"});
@@ -313,9 +272,10 @@ export async function runBuiltinTool(
         if (!ok) {
             return JSON.stringify({error: "user_cancelled"});
         }
-        const r = await ctx.kernel.post("/api/query/sql", {stmt});
+        const r = await ctx.kernel.post("/api/query/sql", {stmt, mode: "readonly_single"});
         return JSON.stringify({code: r.code, msg: r.msg, data: r.data});
     }
 
-    return JSON.stringify({error: `unknown_tool:${name}`});
+    const _exhaustive: never = name;
+    return JSON.stringify({error: `unknown_tool:${String(_exhaustive)}`});
 }

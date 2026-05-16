@@ -33,14 +33,14 @@
       <h2>总览：四层结构</h2>
       <ol>
         <li><strong>插件壳（<code>src/index.ts</code>）</strong>：实现思源 <code>Plugin</code> 生命周期，注册 Dock、设置项，加载 / 保存持久化数据。</li>
-        <li><strong>Dock UI（<code>src/agent/chatDock.ts</code>）</strong>：拼接 DOM、处理按钮与输入、维护内存中的对话列表与工作集展示，触发 Agent 循环。</li>
+        <li><strong>Dock UI（<code>src/dock.ts</code>）</strong>：拼接 DOM、处理按钮与输入、维护内存中的对话列表与工作集展示，触发 Agent 循环。</li>
         <li><strong>Agent 循环（<code>src/agent/agentLoop.ts</code>）</strong>：组织消息数组、调用 LLM、消费 <code>tool_calls</code>、写审计事件；是「编排层」。</li>
         <li><strong>工具与内核（<code>builtinTools.ts</code> + <code>kernelExecutor.ts</code>）</strong>：把模型意图翻译成思源内核 REST 调用，并做工作集校验与写确认。</li>
       </ol>
 
       <h2>数据流（一次用户发送）</h2>
       <pre class="diagram"><code>用户点击「发送」
-  → chatDock.runSend 读取设置（API Key、baseUrl、model、allowSqlTool）
+  → dock 内 runSend 读取设置（API Key、baseUrl、model）
   → runAgentLoop({ llm, worksetRootIds, messages, userText, signal, onAudit })
        1. 追加 user 消息；构造 system + 历史 convo
        2. 循环（无固定轮数上限；用户可通过 AbortSignal 中止）：
@@ -49,11 +49,11 @@
             若有 tool_calls → 追加 assistant（含 tool_calls）到 convo 与 messages
             对每个 call：runBuiltinTool → kernel.post("/api/...")
             每个结果以 role=tool 追加
-  → chatDock 刷新消息区与审计日志</code></pre>
+  → dock 刷新消息区与审计日志</code></pre>
 
       <h2>工作集（workset）与安全边界</h2>
       <p>
-        工作集是用户显式选中的<strong>文档根块 ID（rootID）列表</strong>，存于 <code>STORAGE_AGENT_WORKSET</code>。
+        工作集是用户显式选中的<strong>文档根块 ID（rootID）列表</strong>，存于 <code>STORAGE_KEY_WORKSET</code>（磁盘键名 <code>agent-workset</code>）。
         只读工具在访问块前会通过 <code>ensureRootInWorkset</code> 校验该块所属文档根是否在工作集中；读文档则要求传入的
         <code>id</code> 本身必须是工作集内的根 ID。这样即使模型「想」读别的文档，也会被工具层拒绝。
       </p>
@@ -61,13 +61,13 @@
       <h2>KernelExecutor 抽象</h2>
       <p>
         <code>KernelExecutor</code> 接口只暴露 <code>post(url, body)</code>，默认实现 <code>createFetchSyncKernelExecutor</code>
-        使用思源提供的 <code>fetchSyncPost</code>。未来若改为独立 Node 服务、MCP 或 WebSocket，只需替换实现并注入
+        使用插件内 <code>postKernelJson</code>（标准 <code>fetch</code> POST JSON，不经思源 <code>fetchSyncPost</code>）。未来若改为独立 Node 服务、MCP 或 WebSocket，只需替换实现并注入
         <code>runAgentLoop({ kernel: ... })</code>，编排层可保持不变。
       </p>
 
       <h2>审计（Audit）与可观测性</h2>
       <p>
-        <code>AuditEvent</code> 描述 LLM 请求 / 响应、工具调用与结果、用户消息预览等。<code>chatDock</code> 里
+        <code>AuditEvent</code> 描述 LLM 请求 / 响应、工具调用与结果、用户消息预览等。<code>dock.ts</code> 里
         <code>pushAudit</code> 将其格式化为运行日志，便于排查「模型调了哪个工具、耗时多少、是否失败」。
       </p>
 
@@ -84,12 +84,12 @@
           <tr>
             <td>baseUrl、apiKey、model</td>
             <td><code>agent-settings</code></td>
-            <td><code>chatDock</code> 发送前 <code>loadData</code> → 传入 <code>openAIChatCompletion</code></td>
+            <td><code>index.ts</code> 启动时 <code>refreshPluginDataFromStorage</code>；发送前读 <code>plugin.data</code> → <code>openAIChatCompletion</code></td>
           </tr>
           <tr>
-            <td>allowSqlTool</td>
-            <td>同上</td>
-            <td>控制是否向模型注册 <code>siyuan_sql_query</code>；运行时仍每次确认</td>
+            <td>SQL 只读策略</td>
+            <td>同上（无需单独开关）</td>
+            <td><code>siyuan_sql_query</code> 始终出现在工具列表；<code>assertReadonlySqlStmt</code> 拦截写语句；每次执行仍确认</td>
           </tr>
           <tr>
             <td>工作集 rootIds</td>

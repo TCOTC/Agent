@@ -2,8 +2,8 @@
   "name": "Agent",
   "author": "TCOTC",
   "url": "https://github.com/TCOTC/Agent",
-  "version": "0.1.0",
-  "minAppVersion": "3.6.4",
+  "version": "1.0.0",
+  "minAppVersion": "3.6.5",
   "backends": [
     "windows",
     "linux",
@@ -22,28 +22,22 @@
     "desktop-window",
     "all"
   ],
-  "disabledInPublish": false,
+  "disabledInPublish": true,
   "displayName": {
-    "default": "Agent",
-    "zh_CN": "Agent"
+    "default": "Agent"
   },
   "description": {
-    "default": "SiYuan note assistant: in-process OpenAI-compatible agent with workset and tools",
-    "zh_CN": "思源笔记助手：进程内 OpenAI 兼容 Agent，工作集与内置工具"
+    "default": "SiYuan AI assistant",
+    "zh_CN": "思源笔记 AI 助手"
   },
   "readme": {
     "default": "README.md",
     "zh_CN": "README_zh_CN.md"
   },
   "funding": {
-    "openCollective": "",
-    "patreon": "",
-    "github": "",
-    "custom": []
+    "custom": ["https://mytemos.com/"]
   },
   "keywords": [
-    "Agent",
-    "AI",
-    "思源"
+    "Agent"
   ]
 }
