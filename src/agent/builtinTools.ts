@@ -272,7 +272,7 @@ export async function runBuiltinTool(
         if (!ok) {
             return JSON.stringify({error: "user_cancelled"});
         }
-        const r = await ctx.kernel.post("/api/query/sql", {stmt, mode: "readonly_single"});
+        const r = await ctx.kernel.post("/api/query/sql", {stmt, mode: "readonly"});
         return JSON.stringify({code: r.code, msg: r.msg, data: r.data});
     }
 
