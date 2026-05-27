@@ -153,11 +153,6 @@ export async function patchAssistantRow(
         });
     }
 
-    // 流式阶段先同步展示纯文本，避免等待 md2html 时空白
-    if (streamOpen && (contentRaw || reasoningRaw)) {
-        patchAssistantRowPlain(row, m);
-    }
-
     await syncAssistantMessageDom(row, m, lute, streamOpen, destroyed);
 }
 

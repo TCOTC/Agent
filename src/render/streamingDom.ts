@@ -13,6 +13,8 @@ export type StreamingMdDom = {
 
 const streamingMdDomByBlocksRoot = new WeakMap<HTMLElement, StreamingMdDom>();
 const tailSyncStateByBlocksRoot = new WeakMap<HTMLElement, {tailHtml: string; sealedN: number}>();
+/** 异步 md2html 世代号，丢弃过期的 DOM 写入 */
+const hostGenerationByBlocksRoot = new WeakMap<HTMLElement, number>();
 
 function getStreamingMdDomForRoot(blocksRoot: HTMLElement): StreamingMdDom {
     let d = streamingMdDomByBlocksRoot.get(blocksRoot);
@@ -94,6 +96,7 @@ function syncTailDirectChildren(
 export function clearStreamingDomHost(blocksRoot: HTMLElement): void {
     streamingMdDomByBlocksRoot.delete(blocksRoot);
     tailSyncStateByBlocksRoot.delete(blocksRoot);
+    hostGenerationByBlocksRoot.delete(blocksRoot);
 }
 
 /** 流式 Markdown 预览 DOM 增量同步 */
@@ -109,8 +112,11 @@ export async function syncStreamingMdHost(
     if (destroyed()) {
         return;
     }
+    const gen = (hostGenerationByBlocksRoot.get(blocksRoot) ?? 0) + 1;
+    hostGenerationByBlocksRoot.set(blocksRoot, gen);
+
     const {sealedHtmlParts, tailHtml} = await getStreamingAssistantMdParts(m, fullMd, lute, kind);
-    if (destroyed()) {
+    if (destroyed() || hostGenerationByBlocksRoot.get(blocksRoot) !== gen) {
         return;
     }
     const n = sealedHtmlParts.length;

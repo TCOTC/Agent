@@ -1,8 +1,7 @@
 .agent-composer {
-  flex: 0 0 auto;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   padding: 8px 10px 10px;
   border-top: 1px solid var(--b3-border-color);
   background: var(--b3-theme-surface);

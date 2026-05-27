@@ -34,7 +34,6 @@ import {
     SLASH_COMMANDS,
 } from "../chat/slashCommands";
 import {
-    buildAssistantRow,
     clearAssistantCache,
     ensureMessageRow,
     patchAssistantRow,
@@ -71,7 +70,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     <input class="b3-text-field agent-rail__search" data-session-search placeholder="搜索对话…" />
     <div class="agent-rail__list fn__flex-1" data-session-list></div>
   </aside>
-  <div class="agent-main agent-main--layout">
+  <div class="agent-main fn__flex-column fn__flex-1">
     <header class="agent-main__header fn__flex">
       <div class="agent-tabs fn__flex">
         <button type="button" class="agent-tabs__btn agent-tabs__btn--active" data-tab="chat">聊天</button>
@@ -84,17 +83,15 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
       <button type="button" class="b3-button b3-button--text" data-open-settings title="设置">⚙</button>
     </header>
     <div class="agent-main__ctx fn__flex" data-ctx-chips></div>
-    <div class="agent-main__viewport">
-      <div class="agent-main__body" data-tab-chat>
-        <div class="agent-messages" data-messages></div>
-      </div>
-      <div class="agent-main__body fn__none" data-tab-activity>
-        <div class="agent-timeline" data-timeline></div>
-      </div>
-      <footer class="agent-main__footer">
-        <span data-token-stats>Token —</span>
-      </footer>
+    <div class="agent-main__body fn__flex-1" data-tab-chat>
+      <div class="agent-messages fn__flex-1" data-messages></div>
     </div>
+    <div class="agent-main__body fn__flex-1 fn__none" data-tab-activity>
+      <div class="agent-timeline fn__flex-1" data-timeline></div>
+    </div>
+    <footer class="agent-main__footer">
+      <span data-token-stats>Token —</span>
+    </footer>
     <div class="agent-composer">
       <div class="agent-composer__attach fn__flex" data-attach-bar>
         <label class="agent-chip"><input type="checkbox" data-include-ctx checked /><span>当前文档</span></label>
@@ -292,7 +289,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             const row = ensureMessageRow(elMessages, m, rowByMessage, slot);
 
             if (seq !== renderSeq) {
-                // 新一轮渲染已开始；当前行已在 DOM 中，交给新轮次继续 patch
                 continue;
             }
 
