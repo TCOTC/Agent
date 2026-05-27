@@ -22,7 +22,7 @@ export function buildModeSystemPrompt(mode: AgentMode, extras: {
         "- 探索结构：siyuan_get_doc_outline、siyuan_get_backlinks、siyuan_list_child_blocks",
         "- 大段改写：siyuan_edit_document（diff 预览，用户确认后写入）",
         "- 单块精确改：siyuan_edit_block_kramdown（保留 IAL）",
-        "- 导航：siyuan_open_document / siyuan_focus_block",
+        "- 导航：siyuan_open_document（打开并展示，可选高亮）/ siyuan_focus_block（聚焦光标到块）",
         "",
         "## 原则",
         "1. 先读后写，禁止臆测文档内容。",

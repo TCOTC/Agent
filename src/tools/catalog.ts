@@ -128,7 +128,7 @@ export const STRUCTURE_TOOLS: ToolDefinition[] = [
 export const UI_TOOLS: ToolDefinition[] = [
     {
         name: "siyuan_open_document",
-        description: "在编辑器打开文档/块；highlight=true 时高亮聚焦。",
+        description: "在编辑器打开并切换到文档/块。highlight=true 时滚动高亮目标，但不将光标定位到块内。",
         parameters: obj({
             id: {type: "string"},
             highlight: {type: "boolean", default: false},
@@ -138,7 +138,7 @@ export const UI_TOOLS: ToolDefinition[] = [
     },
     {
         name: "siyuan_focus_block",
-        description: "滚动并高亮到块。",
+        description: "切换到目标文档并聚焦到块（光标定位），用于需要用户继续编辑时。",
         parameters: obj({id: {type: "string"}}, ["id"]),
         risk: "ui",
         source: "builtin",

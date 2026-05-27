@@ -19,8 +19,12 @@ function formatArgs(args: string): string {
 function formatToolResultPreview(name: string, text: string): string {
     try {
         const o = JSON.parse(text) as Record<string, unknown>;
-        if (name === "siyuan_open_document" || name === "siyuan_focus_block") {
-            return o.ok ? `已打开块 ${String(o.id ?? "")}` : text;
+        if (name === "siyuan_open_document") {
+            const hl = o.highlight ? "（已高亮）" : "";
+            return o.ok ? `已打开 ${String(o.id ?? "")}${hl}` : text;
+        }
+        if (name === "siyuan_focus_block") {
+            return o.ok ? `已聚焦到块 ${String(o.id ?? "")}` : text;
         }
         if (name === "siyuan_edit_document") {
             if (o.reason === "user_rejected") {

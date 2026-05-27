@@ -14,6 +14,46 @@ import {isToolName} from "../agent/types";
 
 const SQL_READONLY = /^\s*(SELECT|WITH|EXPLAIN|VALUES)\b/i;
 
+async function getBlockFoldInfo(
+    kernel: KernelExecutor,
+    id: string,
+): Promise<{isFolded: boolean; isRoot: boolean}> {
+    const r = await kernel.post("/api/block/checkBlockFold", {id});
+    if (r.code !== 0) {
+        return {isFolded: false, isRoot: false};
+    }
+    const d = r.data as {isFolded?: boolean; isRoot?: boolean};
+    return {isFolded: !!d.isFolded, isRoot: !!d.isRoot};
+}
+
+/** 与思源 checkFold / openFileById 一致：CB_GET_ALL 仅用于折叠子块的缩放聚焦。 */
+function buildOpenDocumentAction(
+    highlight: boolean,
+    fold: {isFolded: boolean; isRoot: boolean},
+): string[] {
+    if (highlight) {
+        return fold.isFolded
+            ? [Constants.CB_GET_HL, Constants.CB_GET_ALL]
+            : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL];
+    }
+    if (fold.isRoot) {
+        return [];
+    }
+    return fold.isFolded ? [Constants.CB_GET_ALL] : [];
+}
+
+function buildFocusBlockAction(fold: {isFolded: boolean; isRoot: boolean}): string[] {
+    if (fold.isFolded) {
+        return [Constants.CB_GET_HL, Constants.CB_GET_FOCUS, Constants.CB_GET_ALL];
+    }
+    return [
+        Constants.CB_GET_HL,
+        Constants.CB_GET_CONTEXT,
+        Constants.CB_GET_ROOTSCROLL,
+        Constants.CB_GET_FOCUS,
+    ];
+}
+
 export interface ToolRunContext {
     kernel: KernelExecutor;
     plugin: Agent;
@@ -211,19 +251,31 @@ export async function runTool(
             return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
         }
 
-        if (toolName === "siyuan_open_document" || toolName === "siyuan_focus_block") {
+        if (toolName === "siyuan_open_document") {
             const id = String(args.id ?? "");
-            const highlight = toolName === "siyuan_focus_block" || args.highlight === true;
+            const highlight = args.highlight === true;
+            const fold = await getBlockFoldInfo(ctx.kernel, id);
             openTab({
                 app: ctx.plugin.app,
                 doc: {
                     id,
-                    action: highlight
-                        ? [Constants.CB_GET_ALL, Constants.CB_GET_HL, Constants.CB_GET_FOCUS]
-                        : [Constants.CB_GET_ALL],
+                    action: buildOpenDocumentAction(highlight, fold),
                 },
             });
-            return {text: JSON.stringify({ok: true, id}), ok: true};
+            return {text: JSON.stringify({ok: true, id, highlight, ...fold}), ok: true};
+        }
+
+        if (toolName === "siyuan_focus_block") {
+            const id = String(args.id ?? "");
+            const fold = await getBlockFoldInfo(ctx.kernel, id);
+            openTab({
+                app: ctx.plugin.app,
+                doc: {
+                    id,
+                    action: buildFocusBlockAction(fold),
+                },
+            });
+            return {text: JSON.stringify({ok: true, id, ...fold}), ok: true};
         }
 
         if (toolName === "siyuan_edit_document") {
