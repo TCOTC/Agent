@@ -35,10 +35,10 @@ import {
 } from "../chat/slashCommands";
 import {
     buildAssistantRow,
-    buildToolResultRow,
-    buildUserMessageRow,
     clearAssistantCache,
+    ensureMessageRow,
     patchAssistantRow,
+    patchAssistantRowPlain,
 } from "../chat/messageRenderer";
 import {renderMentionMenu, searchMentionHits} from "../chat/mentionPicker";
 import {downloadTextFile, sessionToMarkdown} from "../chat/exportSession";
@@ -236,8 +236,11 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     };
 
     const scheduleStreamRender = () => {
-        if (destroyed || streamRaf) {
+        if (destroyed) {
             return;
+        }
+        if (streamRaf) {
+            cancelAnimationFrame(streamRaf);
         }
         streamRaf = requestAnimationFrame(() => {
             streamRaf = 0;
@@ -245,12 +248,17 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         });
     };
 
+    function clearMessagesEmptyState(): void {
+        elMessages.querySelector(".agent-empty")?.remove();
+    }
+
     async function renderMessages(): Promise<void> {
         if (destroyed) {
             return;
         }
         const seq = ++renderSeq;
         const msgs = getActive().messages;
+
         if (!msgs.length) {
             elMessages.innerHTML = `<div class="agent-empty">
 <h3>Agent 已就绪</h3>
@@ -263,45 +271,56 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 </div>`;
             return;
         }
+
+        clearMessagesEmptyState();
+
         const luteRes = getLuteResult();
-        if (luteRes.ok === false) {
-            elMessages.innerHTML = `<div class="agent-empty">${esc(luteRes.message)}</div>`;
-            return;
-        }
-        const lute = luteRes.lute;
+        const lute = luteRes.ok ? luteRes.lute : null;
+
         while (elMessages.children.length > msgs.length) {
             elMessages.removeChild(elMessages.lastElementChild!);
         }
+
         for (let i = 0; i < msgs.length; i++) {
-            if (destroyed || seq !== renderSeq) {
+            if (destroyed) {
                 return;
             }
             const m = msgs[i];
             const slot = elMessages.children[i] as HTMLElement | undefined;
-            let row = rowByMessage.get(m);
-            if (row && slot === row) {
-                if (m.role === "assistant") {
-                    await patchAssistantRow(row, m, lute, abortCtl !== null, isDestroyed);
-                } else if (m.role === "user") {
-                    row.querySelector(".agent-msg__text")!.textContent = m.content ?? "";
-                } else if (m.role === "tool") {
-                    row.querySelector(".agent-msg__text")!.textContent = (m.content ?? "").slice(0, 3000);
-                }
+            const row = ensureMessageRow(elMessages, m, rowByMessage, slot);
+
+            if (seq !== renderSeq) {
+                // 新一轮渲染已开始；当前行已在 DOM 中，交给新轮次继续 patch
                 continue;
             }
-            if (m.role === "assistant") {
-                row = buildAssistantRow();
-                await patchAssistantRow(row, m, lute, abortCtl !== null, isDestroyed);
-            } else if (m.role === "user") {
-                row = buildUserMessageRow(m.content ?? "");
+
+            if (m.role === "user") {
+                const pre = row.querySelector(".agent-msg__text");
+                if (pre) {
+                    pre.textContent = m.content ?? "";
+                }
             } else if (m.role === "tool") {
-                row = buildToolResultRow(m);
-            } else {
-                row = document.createElement("article");
+                const pre = row.querySelector(".agent-msg__text");
+                if (pre) {
+                    pre.textContent = (m.content ?? "").slice(0, 3000);
+                }
+            } else if (m.role === "assistant") {
+                if (lute) {
+                    try {
+                        await patchAssistantRow(row, m, lute, abortCtl !== null, isDestroyed);
+                    } catch {
+                        patchAssistantRowPlain(row, m);
+                    }
+                } else {
+                    patchAssistantRowPlain(row, m);
+                }
             }
-            rowByMessage.set(m, row);
-            slot ? elMessages.replaceChild(row, slot) : elMessages.appendChild(row);
+
+            if (destroyed || seq !== renderSeq) {
+                return;
+            }
         }
+
         if (seq === renderSeq) {
             elMessages.scrollTop = elMessages.scrollHeight;
         }
@@ -385,6 +404,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 signal: abortCtl.signal,
                 onAudit: pushAudit,
                 onStreamDelta: scheduleStreamRender,
+                onMessagesChanged: scheduleStreamRender,
                 customInstructions: [settings.customInstructions, sess.customInstructions].filter(Boolean).join("\n"),
                 editorContext: editorCtx,
                 attachments,

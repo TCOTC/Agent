@@ -1,6 +1,7 @@
 .agent-shell {
   height: 100%;
   min-height: 0;
+  overflow: hidden;
   background: var(--b3-theme-background);
 }
 
@@ -70,6 +71,8 @@
 
 .agent-main {
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 
   &__header {
     align-items: center;
@@ -93,6 +96,7 @@
 
   &__body {
     min-height: 0;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
   }
@@ -142,6 +146,8 @@
 }
 
 .agent-messages {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 12px 10px;
 }

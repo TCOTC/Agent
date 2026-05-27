@@ -23,6 +23,8 @@ export interface RunAgentLoopParams {
     signal: AbortSignal;
     onAudit: (e: AuditEvent) => void;
     onStreamDelta?: () => void;
+    /** 消息列表变更后立即刷新 UI（如用户消息写入后） */
+    onMessagesChanged?: () => void;
     customInstructions?: string;
     editorContext?: string;
     attachments?: ContextAttachment[];
@@ -51,6 +53,7 @@ async function runAgentLoopInner(p: RunAgentLoopParams): Promise<RunAgentLoopOut
 
     p.onAudit({kind: "user_message", preview: p.userText.slice(0, 200)});
     p.messages.push({role: "user", content: p.userText});
+    p.onMessagesChanged?.();
 
     const systemContent = buildModeSystemPrompt(p.mode, {
         customInstructions: p.customInstructions,
@@ -88,6 +91,7 @@ async function runAgentLoopInner(p: RunAgentLoopParams): Promise<RunAgentLoopOut
         const asst: ChatMessage = {role: "assistant", content: ""};
         p.messages.push(asst);
         convo.push(asst);
+        p.onMessagesChanged?.();
 
         const applyStream = (snap: ChatCompletionStreamSnapshot) => {
             asst.content = snap.content;

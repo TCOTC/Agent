@@ -91,6 +91,22 @@ function renderDoneTools(host: HTMLElement, m: ChatMessage): void {
     }
 }
 
+export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
+    const think = row.querySelector(".agent-msg__think") as HTMLDetailsElement | null;
+    const reasoningHost = row.querySelector(".agent-msg__reasoning") as HTMLElement | null;
+    const bodyEl = row.querySelector(".agent-msg__body") as HTMLElement | null;
+    const reasoningRaw = m.reasoning_content ? String(m.reasoning_content) : "";
+    if (think) {
+        think.hidden = !reasoningRaw;
+    }
+    if (reasoningHost) {
+        reasoningHost.textContent = reasoningRaw;
+    }
+    if (bodyEl) {
+        bodyEl.textContent = m.content ?? "";
+    }
+}
+
 export async function patchAssistantRow(
     row: HTMLElement,
     m: ChatMessage,
@@ -137,7 +153,43 @@ export async function patchAssistantRow(
         });
     }
 
+    // 流式阶段先同步展示纯文本，避免等待 md2html 时空白
+    if (streamOpen && (contentRaw || reasoningRaw)) {
+        patchAssistantRowPlain(row, m);
+    }
+
     await syncAssistantMessageDom(row, m, lute, streamOpen, destroyed);
+}
+
+/** 确保消息行已挂载到 DOM（在 async 渲染之前同步执行，避免竞态） */
+export function ensureMessageRow(
+    elMessages: HTMLElement,
+    m: ChatMessage,
+    rowByMessage: WeakMap<ChatMessage, HTMLElement>,
+    slot: HTMLElement | undefined,
+): HTMLElement {
+    let row = rowByMessage.get(m);
+    if (!row) {
+        if (m.role === "assistant") {
+            row = buildAssistantRow();
+        } else if (m.role === "user") {
+            row = buildUserMessageRow(m.content ?? "");
+        } else if (m.role === "tool") {
+            row = buildToolResultRow(m);
+        } else {
+            row = document.createElement("article");
+            row.textContent = m.role;
+        }
+        rowByMessage.set(m, row);
+    }
+    if (slot !== row) {
+        if (slot) {
+            elMessages.replaceChild(row, slot);
+        } else if (!row.isConnected) {
+            elMessages.appendChild(row);
+        }
+    }
+    return row;
 }
 
 export function clearAssistantCache(m: ChatMessage): void {
