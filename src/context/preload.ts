@@ -1,6 +1,6 @@
 import type {KernelExecutor} from "../agent/types";
 import type {ContextAttachment} from "./types";
-import {sliceMarkdownByLines} from "../tools/markdown";
+import {EXPORT_MD_BODY_OPTS, sliceMarkdownByLines} from "../tools/markdown";
 
 /** 为附加的文档/块拉取预览文本，供系统提示使用 */
 export async function preloadAttachmentPreviews(
@@ -19,8 +19,7 @@ export async function preloadAttachmentPreviews(
             if (a.kind === "document" || a.kind === "block") {
                 const r = await kernel.post("/api/export/exportMdContent", {
                     id: a.id,
-                    yfm: false,
-                    fillCSSVar: false,
+                    ...EXPORT_MD_BODY_OPTS,
                 });
                 if (r.code === 0) {
                     const md = (r.data as {content?: string})?.content ?? "";

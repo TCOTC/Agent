@@ -154,7 +154,18 @@ async function runAgentLoopInner(p: RunAgentLoopParams): Promise<RunAgentLoopOut
             const args = tc.function.arguments ?? "{}";
             p.onAudit({kind: "tool_call", toolCallId: tc.id, name, argsPreview: args.slice(0, 400)});
             const t0 = performance.now();
-            const run = await runTool(toolCtx, name, args);
+            const run = await runTool({
+                ...toolCtx,
+                onToolUiHint: (hint) => {
+                    asst._toolHint = {...(asst._toolHint ?? {}), [tc.id]: hint};
+                    agentBus.emit(AgentEvents.MESSAGES_RENDER);
+                    p.onMessagesChanged?.();
+                },
+            }, name, args);
+            asst._toolResults = {...(asst._toolResults ?? {}), [tc.id]: run.text};
+            if (asst._toolHint) {
+                delete asst._toolHint[tc.id];
+            }
             asst._toolStatus[tc.id] = run.ok ? "ok" : "fail";
             agentBus.emit(AgentEvents.TOOL_END, {name, ok: run.ok});
             agentBus.emit(AgentEvents.MESSAGES_RENDER);

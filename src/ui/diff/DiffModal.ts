@@ -13,8 +13,8 @@ export function showDiffPreviewModal(html: string, title: string): Promise<boole
   <div class="agent-diff-modal__body agent-diff">${html}</div>
   <footer class="agent-diff-modal__foot fn__flex">
     <span class="fn__flex-1 b3-label__text">绿色为新增，红色为删除</span>
-    <button type="button" class="b3-button b3-button--cancel" data-reject>取消</button>
-    <button type="button" class="b3-button b3-button--text" data-accept>知道了</button>
+    <button type="button" class="b3-button b3-button--cancel" data-reject>拒绝</button>
+    <button type="button" class="b3-button b3-button--text" data-accept>应用</button>
   </footer>
 </div>`;
         const close = (ok: boolean) => {

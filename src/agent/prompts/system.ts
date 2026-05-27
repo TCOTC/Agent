@@ -10,7 +10,7 @@ export function buildModeSystemPrompt(mode: AgentMode, extras: {
         mode === "ask"
             ? "当前模式：**问答**。你只能使用只读与 UI 导航工具，不得修改笔记内容。"
             : mode === "edit"
-            ? "当前模式：**编辑**。优先读取目标文档，使用 propose/apply 或 Kramdown 精准编辑；大改前先展示差异。"
+            ? "当前模式：**编辑**。优先读取目标文档，大段改写使用 siyuan_edit_document（用户于 diff 预览中确认后写入），单块精确改使用 Kramdown 工具。"
             : "当前模式：**Agent**。可自主多步调用工具完成任务，低风险写入自动执行。";
 
     const parts = [
@@ -20,7 +20,7 @@ export function buildModeSystemPrompt(mode: AgentMode, extras: {
         "## 工具策略",
         "- 理解文档：siyuan_read_markdown（可指定行范围）→ 需要块 ID 时 siyuan_read_kramdown",
         "- 探索结构：siyuan_get_doc_outline、siyuan_get_backlinks、siyuan_list_child_blocks",
-        "- 大段改写：siyuan_propose_document_edit 生成 diff → 用户确认后 siyuan_apply_document_edit",
+        "- 大段改写：siyuan_edit_document（diff 预览，用户确认后写入）",
         "- 单块精确改：siyuan_edit_block_kramdown（保留 IAL）",
         "- 导航：siyuan_open_document / siyuan_focus_block",
         "",
@@ -28,7 +28,8 @@ export function buildModeSystemPrompt(mode: AgentMode, extras: {
         "1. 先读后写，禁止臆测文档内容。",
         "2. 中文回答，结构清晰。",
         "3. 保持块 ID 稳定，避免破坏双向链接。",
-        "4. 批量或删除操作前说明影响范围。",
+        "4. 文档标题由思源单独管理：create 的 path 末段即标题，edit/read 的正文不含标题，禁止写入重复的一级标题。",
+        "5. 批量或删除操作前说明影响范围。",
         "",
         SQL_TEMPLATES,
     ];

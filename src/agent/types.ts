@@ -37,8 +37,7 @@ export const TOOL_NAMES = [
     "siyuan_set_block_attributes",
     "siyuan_create_document",
     "siyuan_rename_document",
-    "siyuan_propose_document_edit",
-    "siyuan_apply_document_edit",
+    "siyuan_edit_document",
     "siyuan_delete_block",
     "siyuan_sql_query",
 ] as const;
@@ -85,7 +84,7 @@ export type AuditEvent =
     | {kind: "tool_blocked"; name: string; reason: string}
     | {kind: "tool_confirm_required"; name: string; detail: string; riskScore: number}
     | {kind: "tool_confirm_result"; name: string; approved: boolean}
-    | {kind: "pending_edit"; editId: string; docId: string; adds: number; removes: number};
+    | {kind: "pending_edit"; docId: string; adds: number; removes: number};
 
 export interface KernelExecutor {
     post(url: string, body?: Record<string, unknown>): Promise<{
@@ -115,6 +114,10 @@ export interface ChatMessage {
     tool_call_id?: string;
     /** UI：工具执行状态 */
     _toolStatus?: Record<string, "running" | "ok" | "fail">;
+    /** UI：工具返回文本（按 tool_call id） */
+    _toolResults?: Record<string, string>;
+    /** UI：长时间等待时的提示（如 diff 确认） */
+    _toolHint?: Record<string, string>;
 }
 
 export type OpenAICompatibleConfig = DeepSeekConfig;

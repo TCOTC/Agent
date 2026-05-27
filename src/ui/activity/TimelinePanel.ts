@@ -33,7 +33,7 @@ export function formatTimelineEntry(e: AuditEvent, ts?: string): string {
             text = `${e.name} ${e.ok ? "成功" : "失败"} ${e.durationMs}ms`;
             break;
         case "pending_edit":
-            text = `待应用编辑 ${e.editId} +${e.adds}/-${e.removes}`;
+            text = `文档编辑预览 ${e.docId} +${e.adds}/-${e.removes}`;
             break;
         default:
             text = JSON.stringify(e);

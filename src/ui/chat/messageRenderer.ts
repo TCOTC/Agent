@@ -2,10 +2,11 @@ import type {ChatMessage} from "../../agent/types";
 import type {LuteEngine} from "../../render/lute";
 import {forgetStreamMdCache} from "../../render/streamMdRender";
 import {syncAssistantMessageDom} from "../../render/streamingDom";
+import {renderAssistantToolCalls} from "./toolCallUi";
 
 const PATCH = "__agentPatch";
 
-type Patch = {content: string; reasoning: string; toolsSig: string; statusSig: string; streamOpen: boolean};
+type Patch = {content: string; reasoning: string; toolsSig: string; statusSig: string; resultsSig: string; hintSig: string; streamOpen: boolean};
 
 export function buildUserMessageRow(content: string): HTMLElement {
     const row = document.createElement("article");
@@ -47,8 +48,7 @@ export function buildAssistantRow(): HTMLElement {
     <div class="agent-msg__reasoning b3-typography b3-typography--default"></div>
   </details>
   <div class="agent-msg__body b3-typography b3-typography--default"></div>
-  <div class="agent-msg__tools-live"></div>
-  <div class="agent-msg__tools-done"></div>
+  <div class="agent-msg__tools"></div>
   <div class="agent-msg__actions">
     <button type="button" class="agent-msg__action" data-copy-md title="复制 Markdown">复制</button>
   </div>
@@ -56,39 +56,12 @@ export function buildAssistantRow(): HTMLElement {
     return row;
 }
 
-function toolStatusSig(m: ChatMessage): string {
-    if (!m._toolStatus) {
-        return "";
-    }
-    return JSON.stringify(m._toolStatus);
+function toolResultsSig(m: ChatMessage): string {
+    return m._toolResults ? JSON.stringify(m._toolResults) : "";
 }
 
-function renderLiveTools(host: HTMLElement, m: ChatMessage): void {
-    host.replaceChildren();
-    if (!m.tool_calls?.length) {
-        return;
-    }
-    for (const tc of m.tool_calls) {
-        const st = m._toolStatus?.[tc.id] ?? "running";
-        const el = document.createElement("div");
-        el.className = `agent-tool-live agent-tool-live--${st}`;
-        const icon = st === "running" ? '<span class="agent-spinner"></span>' : st === "ok" ? "✓" : "✗";
-        el.innerHTML = `${icon}<span class="agent-tool-live__name">${tc.function.name}</span>`;
-        host.appendChild(el);
-    }
-}
-
-function renderDoneTools(host: HTMLElement, m: ChatMessage): void {
-    host.replaceChildren();
-    if (!m.tool_calls?.length || m._toolStatus) {
-        return;
-    }
-    for (const tc of m.tool_calls) {
-        const card = document.createElement("details");
-        card.className = "agent-tool-card";
-        card.innerHTML = `<summary>🔧 ${tc.function.name}</summary><pre>${tc.function.arguments ?? "{}"}</pre>`;
-        host.appendChild(card);
-    }
+function toolHintSig(m: ChatMessage): string {
+    return m._toolHint ? JSON.stringify(m._toolHint) : "";
 }
 
 export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
@@ -105,6 +78,7 @@ export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
     if (bodyEl) {
         bodyEl.textContent = m.content ?? "";
     }
+    renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m);
 }
 
 export async function patchAssistantRow(
@@ -117,7 +91,9 @@ export async function patchAssistantRow(
     const reasoningRaw = m.reasoning_content ? String(m.reasoning_content) : "";
     const contentRaw = m.content ?? "";
     const toolsSig = m.tool_calls?.map((t) => t.function.name).join(",") ?? "";
-    const statusSig = toolStatusSig(m);
+    const statusSig = m._toolStatus ? JSON.stringify(m._toolStatus) : "";
+    const resultsSig = toolResultsSig(m);
+    const hintSig = toolHintSig(m);
     const prev = (row as unknown as Record<string, Patch | undefined>)[PATCH];
     if (
         prev &&
@@ -125,6 +101,8 @@ export async function patchAssistantRow(
         prev.reasoning === reasoningRaw &&
         prev.toolsSig === toolsSig &&
         prev.statusSig === statusSig &&
+        prev.resultsSig === resultsSig &&
+        prev.hintSig === hintSig &&
         prev.streamOpen === streamOpen
     ) {
         return;
@@ -134,6 +112,8 @@ export async function patchAssistantRow(
         reasoning: reasoningRaw,
         toolsSig,
         statusSig,
+        resultsSig,
+        hintSig,
         streamOpen,
     };
 
@@ -142,8 +122,7 @@ export async function patchAssistantRow(
         think.hidden = !reasoningRaw;
     }
 
-    renderLiveTools(row.querySelector(".agent-msg__tools-live") as HTMLElement, m);
-    renderDoneTools(row.querySelector(".agent-msg__tools-done") as HTMLElement, m);
+    renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m);
 
     const copyBtn = row.querySelector("[data-copy-md]");
     if (copyBtn && !copyBtn.hasAttribute("data-bound")) {

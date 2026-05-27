@@ -277,15 +277,17 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const luteRes = getLuteResult();
         const lute = luteRes.ok ? luteRes.lute : null;
 
-        while (elMessages.children.length > msgs.length) {
+        const visibleMsgs = msgs.filter((m) => m.role !== "tool");
+
+        while (elMessages.children.length > visibleMsgs.length) {
             elMessages.removeChild(elMessages.lastElementChild!);
         }
 
-        for (let i = 0; i < msgs.length; i++) {
+        for (let i = 0; i < visibleMsgs.length; i++) {
             if (destroyed) {
                 return;
             }
-            const m = msgs[i];
+            const m = visibleMsgs[i];
             const slot = elMessages.children[i] as HTMLElement | undefined;
             const row = ensureMessageRow(elMessages, m, rowByMessage, slot);
 
@@ -297,11 +299,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 const pre = row.querySelector(".agent-msg__text");
                 if (pre) {
                     pre.textContent = m.content ?? "";
-                }
-            } else if (m.role === "tool") {
-                const pre = row.querySelector(".agent-msg__text");
-                if (pre) {
-                    pre.textContent = (m.content ?? "").slice(0, 3000);
                 }
             } else if (m.role === "assistant") {
                 if (lute) {

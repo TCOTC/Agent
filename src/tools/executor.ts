@@ -3,11 +3,10 @@ import type Agent from "../index";
 import type {AuditEvent, KernelExecutor, ToolName} from "../agent/types";
 import {Constants} from "../core/editorContext";
 import {agentBus, AgentEvents} from "../core/eventBus";
-import {createPendingEdit, consumePendingEdit} from "../editor/pendingEdits";
-import {renderDiffHtml} from "../editor/diffEngine";
+import {computeLineDiff, diffSummary, renderDiffHtml} from "../editor/diffEngine";
 import {getToolByName} from "./registry";
 import {assessToolRisk, formatRiskSummary} from "./riskPolicy";
-import {sliceMarkdownByLines} from "./markdown";
+import {docTitleFromPath, EXPORT_MD_BODY_OPTS, sliceMarkdownByLines, stripLeadingDocumentTitle} from "./markdown";
 import {truncateToolOutput, wrapToolJson} from "./truncate";
 import {validateKramdownPayload, verifyBlockExists} from "./kramdownValidate";
 import {checkWorkset, resolveNotebookId, worksetError} from "./worksetGate";
@@ -23,6 +22,8 @@ export interface ToolRunContext {
     worksetNotebookIds: string[];
     riskAutoApproveMax: number;
     showDiffPreview?: (html: string, title: string) => Promise<boolean>;
+    /** 长时间工具步骤的 UI 提示（如等待 diff 确认） */
+    onToolUiHint?: (hint: string) => void;
 }
 
 function parseArgs(raw: string): Record<string, unknown> {
@@ -91,12 +92,14 @@ export async function runTool(
             if (ws) {
                 return {text: JSON.stringify({error: ws}), ok: false};
             }
-            const r = await ctx.kernel.post("/api/export/exportMdContent", {id, yfm: false, fillCSSVar: false});
+            const r = await ctx.kernel.post("/api/export/exportMdContent", {id, ...EXPORT_MD_BODY_OPTS});
             if (r.code !== 0) {
                 return {text: JSON.stringify({error: r.msg}), ok: false};
             }
             const data = r.data as {content?: string; hPath?: string};
             let md = typeof data.content === "string" ? data.content : "";
+            const info = await ctx.kernel.post("/api/block/getBlockInfo", {id});
+            const docTitle = (info.data as {rootTitle?: string})?.rootTitle;
             const sliced = sliceMarkdownByLines(
                 md,
                 typeof args.start_line === "number" ? args.start_line : undefined,
@@ -105,6 +108,8 @@ export async function runTool(
             return {
                 text: wrapToolJson({
                     hPath: data.hPath,
+                    docTitle,
+                    note: "正文不含文档标题；siyuan_edit_document 时不要写入与 docTitle 重复的一级标题",
                     totalLines: sliced.totalLines,
                     startLine: sliced.startLine,
                     endLine: sliced.endLine,
@@ -221,70 +226,72 @@ export async function runTool(
             return {text: JSON.stringify({ok: true, id}), ok: true};
         }
 
-        if (toolName === "siyuan_propose_document_edit") {
+        if (toolName === "siyuan_edit_document") {
             const docId = String(args.doc_id ?? "");
-            const newMd = String(args.new_markdown ?? "");
+            let newMd = String(args.new_markdown ?? "");
             const ws = await gateWorkset(ctx, docId);
             if (ws) {
                 return {text: JSON.stringify({error: ws}), ok: false};
             }
-            const cur = await ctx.kernel.post("/api/export/exportMdContent", {
-                id: docId,
-                yfm: false,
-                fillCSSVar: false,
-            });
+            const info = await ctx.kernel.post("/api/block/getBlockInfo", {id: docId});
+            const title = (info.data as {rootTitle?: string})?.rootTitle;
+            const stripped = stripLeadingDocumentTitle(newMd, title);
+            newMd = stripped.markdown;
+
+            const cur = await ctx.kernel.post("/api/export/exportMdContent", {id: docId, ...EXPORT_MD_BODY_OPTS});
             if (cur.code !== 0) {
                 return {text: JSON.stringify({error: cur.msg}), ok: false};
             }
             const oldMd = (cur.data as {content?: string})?.content ?? "";
-            const info = await ctx.kernel.post("/api/block/getBlockInfo", {id: docId});
-            const title = (info.data as {rootTitle?: string})?.rootTitle;
-            const pending = createPendingEdit(docId, oldMd, newMd, title);
+            const diff = computeLineDiff(oldMd, newMd);
+            const summary = diffSummary(diff);
+
+            if (summary.adds === 0 && summary.removes === 0) {
+                return {
+                    text: JSON.stringify({doc_id: docId, applied: false, reason: "no_changes"}),
+                    ok: true,
+                };
+            }
+
             ctx.onAudit({
                 kind: "pending_edit",
-                editId: pending.id,
                 docId,
-                adds: pending.summary.adds,
-                removes: pending.summary.removes,
+                adds: summary.adds,
+                removes: summary.removes,
             });
-            agentBus.emit(AgentEvents.PENDING_EDIT, pending);
-            if (ctx.showDiffPreview) {
-                const html = renderDiffHtml(pending.diff);
-                await ctx.showDiffPreview(html, `文档编辑预览 · ${title ?? docId}`);
+
+            if (!ctx.showDiffPreview) {
+                return {text: JSON.stringify({error: "preview_unavailable"}), ok: false};
             }
+
+            ctx.onToolUiHint?.("请在弹窗中查看 diff 并选择「应用」或「拒绝」");
+
+            const accepted = await ctx.showDiffPreview(
+                renderDiffHtml(diff),
+                `文档编辑预览 · ${title ?? docId}`,
+            );
+            if (!accepted) {
+                return {
+                    text: JSON.stringify({doc_id: docId, applied: false, reason: "user_rejected"}),
+                    ok: false,
+                };
+            }
+
+            const r = await ctx.kernel.post("/api/block/updateBlock", {
+                id: docId,
+                dataType: "markdown",
+                data: newMd,
+            });
             return {
                 text: JSON.stringify({
-                    edit_id: pending.id,
                     doc_id: docId,
-                    summary: pending.summary,
-                    hint: "用户确认后调用 siyuan_apply_document_edit",
+                    applied: r.code === 0,
+                    summary,
+                    title_stripped: stripped.stripped,
+                    kernel: r,
                 }),
-                ok: true,
+                ok: r.code === 0,
             };
-        }
-
-        if (toolName === "siyuan_apply_document_edit") {
-            const editId = String(args.edit_id ?? "");
-            const edit = consumePendingEdit(editId);
-            if (!edit) {
-                return {text: JSON.stringify({error: "edit_id 无效或已过期"}), ok: false};
-            }
-            const gate = await gateConfirm(
-                ctx,
-                toolName,
-                args,
-                `应用文档 ${edit.docId} 的修改：+${edit.summary.adds} -${edit.summary.removes} 行`,
-            );
-            if (!gate.proceed) {
-                createPendingEdit(edit.docId, edit.oldMarkdown, edit.newMarkdown, edit.docTitle);
-                return {text: JSON.stringify({error: "user_cancelled"}), ok: false};
-            }
-            const r = await ctx.kernel.post("/api/block/updateBlock", {
-                id: edit.docId,
-                dataType: "markdown",
-                data: edit.newMarkdown,
-            });
-            return {text: JSON.stringify(r), ok: r.code === 0, riskScore: gate.riskScore};
         }
 
         if (toolName === "siyuan_create_document") {
@@ -296,12 +303,25 @@ export async function runTool(
             if (!gate.proceed) {
                 return {text: JSON.stringify({error: "user_cancelled"}), ok: false};
             }
+            const path = String(args.path ?? "/Untitled");
+            let markdown = String(args.markdown ?? "");
+            const title = docTitleFromPath(path);
+            const stripped = stripLeadingDocumentTitle(markdown, title);
+            markdown = stripped.markdown;
             const r = await ctx.kernel.post("/api/filetree/createDocWithMd", {
                 notebook: nb,
-                path: String(args.path ?? "/Untitled"),
-                markdown: String(args.markdown ?? ""),
+                path,
+                markdown,
             });
-            return {text: JSON.stringify(r), ok: r.code === 0};
+            return {
+                text: JSON.stringify({
+                    code: r.code,
+                    msg: r.msg,
+                    data: r.data,
+                    title_stripped: stripped.stripped,
+                }),
+                ok: r.code === 0,
+            };
         }
 
         if (toolName === "siyuan_rename_document") {

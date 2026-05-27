@@ -20,7 +20,7 @@ export const READ_TOOLS: ToolDefinition[] = [
     },
     {
         name: "siyuan_read_markdown",
-        description: "导出文档 Markdown。可选 start_line/end_line（1-based）截取行范围。",
+        description: "导出文档正文 Markdown（不含文档标题行）。可选 start_line/end_line（1-based）截取行范围。",
         parameters: obj({
             id: {type: "string", description: "文档根块 ID"},
             start_line: {type: "integer"},
@@ -202,11 +202,11 @@ export const WRITE_TOOLS: ToolDefinition[] = [
     },
     {
         name: "siyuan_create_document",
-        description: "在笔记本下创建新文档（Markdown）。",
+        description: "在笔记本下创建新文档。path 末段为文档标题，markdown 正文不要再写同名一级标题。",
         parameters: obj({
             notebook_id: {type: "string"},
-            path: {type: "string", description: "如 /folder/title"},
-            markdown: {type: "string"},
+            path: {type: "string", description: "如 /folder/文档标题"},
+            markdown: {type: "string", description: "正文 Markdown（不含与 path 末段重复的一级标题）"},
         }, ["notebook_id", "path"]),
         risk: "write",
         source: "builtin",
@@ -222,22 +222,14 @@ export const WRITE_TOOLS: ToolDefinition[] = [
         source: "builtin",
     },
     {
-        name: "siyuan_propose_document_edit",
+        name: "siyuan_edit_document",
         description:
-            "提交文档完整 Markdown 改写方案，生成 diff 预览 ID（不立即写入）。大段改写必须先调用此工具。",
+            "用新 Markdown 替换整篇文档正文（不含文档标题）。会先展示 diff 预览，用户点击「应用」后写入，点击「拒绝」则取消。",
         parameters: obj({
-            doc_id: {type: "string"},
-            new_markdown: {type: "string"},
+            doc_id: {type: "string", description: "文档根块 ID"},
+            new_markdown: {type: "string", description: "替换后的完整 Markdown"},
         }, ["doc_id", "new_markdown"]),
         risk: "write",
-        source: "builtin",
-    },
-    {
-        name: "siyuan_apply_document_edit",
-        description: "应用 propose 返回的 edit_id，将新 Markdown 写入文档（替换文档内容）。",
-        parameters: obj({edit_id: {type: "string"}}, ["edit_id"]),
-        risk: "write",
-        alwaysConfirm: true,
         source: "builtin",
     },
     {

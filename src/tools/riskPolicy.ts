@@ -36,7 +36,7 @@ export function assessToolRisk(
         }
     }
 
-    if (tool.name === "siyuan_apply_document_edit") {
+    if (tool.name === "siyuan_edit_document") {
         score += 25;
         reasons.push("整篇文档替换");
     }
