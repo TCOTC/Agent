@@ -1,6 +1,8 @@
-/** 写入 `settings.json` 的插件持久化配置（不限于 Agent 运行时）。 */
+/** 写入 settings.json 的插件配置 */
 export interface PersistedSettings {
     baseUrl: string;
     apiKey: string;
     model: string;
+    /** 默认启用 DeepSeek 思考模式 */
+    thinkingEnabled: boolean;
 }

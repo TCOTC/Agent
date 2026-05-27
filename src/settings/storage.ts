@@ -1,18 +1,19 @@
+import {DEEPSEEK_DEFAULT_BASE_URL} from "../core/constants";
 import type {PersistedSettings} from "./types";
 
 export const STORAGE_KEY_SETTINGS = "settings.json";
 
 export const defaultSettings: PersistedSettings = {
-    baseUrl: "https://api.deepseek.com",
+    baseUrl: DEEPSEEK_DEFAULT_BASE_URL,
     apiKey: "",
     model: "deepseek-v4-flash",
+    thinkingEnabled: true,
 };
 
 type SettingsKey = keyof typeof defaultSettings;
 
 const settingsKeys = Object.keys(defaultSettings) as SettingsKey[];
 
-/** 优先采用 raw；typeof 与 defaultValue 不一致，或 number 为 NaN 时回退为 defaultValue */
 function coerceSettingValue(
     raw: unknown,
     defaultValue: PersistedSettings[SettingsKey],
@@ -27,7 +28,6 @@ function coerceSettingValue(
     return defaultValue;
 }
 
-/** 仅在从存储读入或设置面板保存前调用；运行中 UI 应直接读 `plugin.data` 中已写入的结果。 */
 export function normalizeSettings(raw: unknown): PersistedSettings {
     const settings = {...defaultSettings} as Record<SettingsKey, PersistedSettings[SettingsKey]>;
     if (!raw || typeof raw !== "object") {

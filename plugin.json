@@ -2,7 +2,7 @@
   "name": "Agent",
   "author": "TCOTC",
   "url": "https://github.com/TCOTC/Agent",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "minAppVersion": "3.6.5",
   "backends": [
     "windows",
@@ -28,7 +28,7 @@
   },
   "description": {
     "default": "SiYuan AI assistant",
-    "zh_CN": "思源笔记 AI 助手"
+    "zh_CN": "思源笔记 AI Agent（DeepSeek）"
   },
   "readme": {
     "default": "README.md",

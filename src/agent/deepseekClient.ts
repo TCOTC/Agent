@@ -1,53 +1,14 @@
-import {
-    getBuiltinToolDefinitions,
-    toolsToOpenAIFormat,
-} from "./builtinTools";
-import type {
-    ChatMessage,
-    OpenAICompatibleConfig,
-    OpenAiToolCallChunk,
-    OpenAiToolStreamAccumPart,
-} from "./types";
+import {getToolDefinitions, toolsToDeepSeekFormat} from "../tools/definitions";
+import type {ChatMessage, DeepSeekConfig} from "./types";
 
-/** 临时：每次流式 delta 回调后休眠（毫秒），便于观察 UI；设为 0 关闭 */
-const STREAM_DELTA_DEBUG_THROTTLE_MS = 0;
-
-/**
- * 临时调试：为 true 时请求不带 tools；`agentLoop.ts` 同步不注入系统提示。
- * 改这一处即可。
- */
-export const LLM_DEBUG_PLAIN_CHAT = false;
-
-/** 休眠或在中止时提前结束（不抛错，由外层读循环根据 `signal` 收尾） */
-function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
-    if (ms <= 0) {
-        return Promise.resolve();
-    }
-    if (signal.aborted) {
-        return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-        const t = setTimeout(() => {
-            signal.removeEventListener("abort", onAbort);
-            resolve();
-        }, ms);
-        const onAbort = () => {
-            clearTimeout(t);
-            resolve();
-        };
-        signal.addEventListener("abort", onAbort, {once: true});
-    });
-}
-
-/** 单次 chat/completions（流式）的可预期失败，不作为异常向上抛 */
 export type AgentLlmFailure =
     | {kind: "aborted"}
     | {kind: "no_response_body"}
-    | {kind: "invalid_openai_response"}
+    | {kind: "invalid_response"}
     | {kind: "http_error"; status: number; bodySnippet: string}
     | {kind: "network_error"; message: string};
 
-export type OpenAIChatCompletionOutcome =
+export type DeepSeekChatOutcome =
     | {ok: true; result: ChatCompletionResult}
     | {ok: false; failure: AgentLlmFailure};
 
@@ -55,15 +16,13 @@ export interface ChatCompletionResult {
     message: {
         role: string;
         content: string | null;
-        /** DeepSeek thinking mode，需写回下一轮 messages */
         reasoning_content?: string | null;
-        tool_calls?: OpenAiToolCallChunk[];
+        tool_calls?: import("./types").OpenAiToolCallChunk[];
     };
     finish_reason?: string;
     usage?: Record<string, unknown>;
 }
 
-/** 流式过程中供 UI 展示的增量快照（与最终 message 结构对齐） */
 export interface ChatCompletionStreamSnapshot {
     content: string;
     reasoning_content?: string | null;
@@ -73,9 +32,20 @@ export interface ChatCompletionStreamSnapshot {
 interface StreamAccum {
     content: string;
     reasoning: string;
-    /** 按 OpenAI stream 的 index 合并分片 */
-    toolParts: Map<number, OpenAiToolStreamAccumPart>;
+    toolParts: Map<number, import("./types").OpenAiToolStreamAccumPart>;
     finishReason?: string;
+}
+
+export interface DeepSeekModelInfo {
+    id: string;
+    object?: string;
+    owned_by?: string;
+}
+
+function joinUrl(base: string, path: string): string {
+    const b = base.replace(/\/+$/, "");
+    const p = path.replace(/^\/+/, "");
+    return `${b}/${p}`;
 }
 
 function snapshotFromAccum(a: StreamAccum): ChatCompletionStreamSnapshot {
@@ -187,37 +157,23 @@ async function parseSseLine(
     onEvent: (obj: Record<string, unknown>) => void | Promise<void>,
 ): Promise<void> {
     const trimmed = line.replace(/\r$/, "").trim();
-    if (!trimmed || trimmed.startsWith(":")) {
-        return;
-    }
-    if (trimmed === "data: [DONE]") {
+    if (!trimmed || trimmed.startsWith(":") || trimmed === "data: [DONE]") {
         return;
     }
     if (!trimmed.startsWith("data: ")) {
         return;
     }
-    const jsonStr = trimmed.slice(6);
-    let obj: unknown;
     try {
-        obj = JSON.parse(jsonStr) as unknown;
+        const obj = JSON.parse(trimmed.slice(6)) as unknown;
+        if (obj && typeof obj === "object") {
+            await onEvent(obj as Record<string, unknown>);
+        }
     } catch {
-        return;
-    }
-    if (obj && typeof obj === "object") {
-        await onEvent(obj as Record<string, unknown>);
+        /* ignore partial JSON */
     }
 }
 
-function joinUrl(base: string, path: string): string {
-    const b = base.replace(/\/+$/, "");
-    const p = path.replace(/^\/+/, "");
-    return `${b}/${p}`;
-}
-
-function appendReasoningIfPresent(
-    m: ChatMessage,
-    o: Record<string, unknown>,
-): void {
+function appendReasoningIfPresent(m: ChatMessage, o: Record<string, unknown>): void {
     if (m.reasoning_content !== undefined) {
         o.reasoning_content = m.reasoning_content;
     }
@@ -225,17 +181,10 @@ function appendReasoningIfPresent(
 
 function sanitizeForApi(m: ChatMessage): Record<string, unknown> {
     if (m.role === "tool") {
-        return {
-            role: "tool",
-            content: m.content ?? "",
-            tool_call_id: m.tool_call_id ?? "",
-        };
+        return {role: "tool", content: m.content ?? "", tool_call_id: m.tool_call_id ?? ""};
     }
     if (m.role === "assistant" && m.tool_calls?.length) {
-        const o: Record<string, unknown> = {
-            role: "assistant",
-            tool_calls: m.tool_calls,
-        };
+        const o: Record<string, unknown> = {role: "assistant", tool_calls: m.tool_calls};
         if (m.content != null && m.content !== "") {
             o.content = m.content;
         }
@@ -243,33 +192,54 @@ function sanitizeForApi(m: ChatMessage): Record<string, unknown> {
         return o;
     }
     if (m.role === "assistant") {
-        const o: Record<string, unknown> = {
-            role: "assistant",
-            content: m.content ?? "",
-        };
+        const o: Record<string, unknown> = {role: "assistant", content: m.content ?? ""};
         appendReasoningIfPresent(m, o);
         return o;
     }
     return {role: m.role, content: m.content ?? ""};
 }
 
-export async function openAIChatCompletion(
-    cfg: OpenAICompatibleConfig,
-    messages: ChatMessage[],
-    signal: AbortSignal,
-    onStreamDelta?: (snapshot: ChatCompletionStreamSnapshot) => void,
-): Promise<OpenAIChatCompletionOutcome> {
-    const url = joinUrl(cfg.baseUrl, "chat/completions");
+function buildRequestBody(cfg: DeepSeekConfig, messages: ChatMessage[]): Record<string, unknown> {
     const body: Record<string, unknown> = {
         model: cfg.model,
         messages: messages.map(sanitizeForApi),
-        temperature: 0.2,
         stream: true,
+        tools: toolsToDeepSeekFormat(getToolDefinitions()),
+        tool_choice: "auto",
     };
-    if (!LLM_DEBUG_PLAIN_CHAT) {
-        body.tools = toolsToOpenAIFormat(getBuiltinToolDefinitions());
-        body.tool_choice = "auto";
+    const thinking = cfg.thinkingEnabled !== false;
+    if (thinking) {
+        body.thinking = {type: "enabled"};
+        body.reasoning_effort = cfg.reasoningEffort ?? "high";
+    } else {
+        body.thinking = {type: "disabled"};
     }
+    return body;
+}
+
+/** 列出 DeepSeek 可用模型 */
+export async function listDeepSeekModels(cfg: Pick<DeepSeekConfig, "baseUrl" | "apiKey">): Promise<
+    DeepSeekModelInfo[]
+> {
+    const url = joinUrl(cfg.baseUrl, "models");
+    const res = await fetch(url, {
+        headers: {Authorization: `Bearer ${cfg.apiKey}`},
+    });
+    if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`list models HTTP ${res.status}: ${t.slice(0, 300)}`);
+    }
+    const json = (await res.json()) as {data?: DeepSeekModelInfo[]};
+    return Array.isArray(json.data) ? json.data : [];
+}
+
+export async function deepseekChatCompletion(
+    cfg: DeepSeekConfig,
+    messages: ChatMessage[],
+    signal: AbortSignal,
+    onStreamDelta?: (snapshot: ChatCompletionStreamSnapshot) => void,
+): Promise<DeepSeekChatOutcome> {
+    const url = joinUrl(cfg.baseUrl, "chat/completions");
     let res: Response;
     try {
         res = await fetch(url, {
@@ -278,15 +248,17 @@ export async function openAIChatCompletion(
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${cfg.apiKey}`,
             },
-            body: JSON.stringify(body),
+            body: JSON.stringify(buildRequestBody(cfg, messages)),
             signal,
         });
     } catch (e) {
         if (signal.aborted || (e instanceof DOMException && e.name === "AbortError")) {
             return {ok: false, failure: {kind: "aborted"}};
         }
-        const message = e instanceof Error ? e.message : String(e);
-        return {ok: false, failure: {kind: "network_error", message}};
+        return {
+            ok: false,
+            failure: {kind: "network_error", message: e instanceof Error ? e.message : String(e)},
+        };
     }
     if (!res.ok) {
         const t = await res.text();
@@ -299,11 +271,7 @@ export async function openAIChatCompletion(
     if (!streamBody) {
         return {ok: false, failure: {kind: "no_response_body"}};
     }
-    const accum: StreamAccum = {
-        content: "",
-        reasoning: "",
-        toolParts: new Map(),
-    };
+    const accum: StreamAccum = {content: "", reasoning: "", toolParts: new Map()};
     let usage: Record<string, unknown> | undefined;
 
     const sse = await readChatCompletionSse(streamBody, signal, async (obj) => {
@@ -321,34 +289,22 @@ export async function openAIChatCompletion(
             accum.finishReason = fr;
         }
         const delta = ch0.delta;
-        if (!delta || typeof delta !== "object") {
-            return;
-        }
-        applyStreamDelta(accum, delta as Record<string, unknown>);
-        onStreamDelta?.(snapshotFromAccum(accum));
-        if (onStreamDelta && STREAM_DELTA_DEBUG_THROTTLE_MS > 0) {
-            await sleepAbortable(STREAM_DELTA_DEBUG_THROTTLE_MS, signal);
+        if (delta && typeof delta === "object") {
+            applyStreamDelta(accum, delta as Record<string, unknown>);
+            onStreamDelta?.(snapshotFromAccum(accum));
         }
     });
     if (sse === "aborted") {
         return {ok: false, failure: {kind: "aborted"}};
     }
-
     const message = accumToMessage(accum);
-    const hasTools = Boolean(message.tool_calls?.length);
-    const hasText = Boolean(
-        (message.content && message.content.length > 0) ||
+    const hasPayload = Boolean(
+        message.tool_calls?.length ||
+            (message.content && message.content.length > 0) ||
             (message.reasoning_content && message.reasoning_content.length > 0),
     );
-    if (!hasTools && !hasText) {
-        return {ok: false, failure: {kind: "invalid_openai_response"}};
+    if (!hasPayload) {
+        return {ok: false, failure: {kind: "invalid_response"}};
     }
-    return {
-        ok: true,
-        result: {
-            message,
-            finish_reason: accum.finishReason,
-            usage,
-        },
-    };
+    return {ok: true, result: {message, finish_reason: accum.finishReason, usage}};
 }

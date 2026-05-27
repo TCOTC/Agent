@@ -1,124 +1,204 @@
-.jcag-dock-wrap {
+.agent-dock-wrap {
   min-height: 0;
-  /** 覆盖 Dock 面板祖先上可能存在的 user-select: none，便于选中复制对话与日志 */
   user-select: text;
   -webkit-user-select: text;
 }
 
-.jcag-dock {
+.agent-panel {
   height: 100%;
   min-height: 0;
-  padding: 8px;
+  padding: 0;
   box-sizing: border-box;
-  gap: 8px;
+  background: var(--b3-theme-background);
 
-  &__toolbar {
+  &__header {
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--b3-border-color);
+    flex-shrink: 0;
+  }
+
+  &__brand {
+    font-weight: 600;
+    font-size: 13px;
+    padding-right: 6px;
+    opacity: 0.9;
+  }
+
+  &__session-select {
+    min-width: 0;
+    max-width: 180px;
+    font-size: 12px;
+  }
+
+  &__messages {
+    min-height: 0;
+    overflow: auto;
+    padding: 10px 10px 4px;
+    scroll-behavior: smooth;
+  }
+
+  &__empty {
+    color: var(--b3-theme-on-surface-light);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 12px 4px;
+  }
+
+  &__footer {
+    flex-shrink: 0;
+    padding: 4px 10px 6px;
+    border-top: 1px solid var(--b3-border-color);
+    font-size: 11px;
+    color: var(--b3-theme-on-surface-light);
+    gap: 4px;
+  }
+
+  &__token {
+    opacity: 0.85;
+  }
+
+  &__ctx {
+    gap: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  &__composer {
+    flex-shrink: 0;
+    padding: 8px 10px 10px;
+    gap: 6px;
+    border-top: 1px solid var(--b3-border-color);
+    background: var(--b3-theme-surface);
+  }
+
+  &__input {
+    resize: vertical;
+    min-height: 56px;
+    max-height: 200px;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  &__composer-bar {
+    align-items: center;
     gap: 6px;
     flex-wrap: wrap;
   }
 
-  &__audit {
+  &__model {
+    max-width: 160px;
     font-size: 12px;
-
-    summary {
-      cursor: pointer;
-      user-select: none;
-    }
   }
 
-  &__audit-pre {
-    margin: 4px 0 0;
-    max-height: 120px;
-    overflow: auto;
-    font-size: 11px;
-    white-space: pre-wrap;
-    background: var(--b3-theme-surface);
-    border-radius: 4px;
-    padding: 6px;
-  }
-
-  &__messages {
-    min-height: 80px;
-    overflow: auto;
-    border: 1px solid var(--b3-border-color);
-    border-radius: 4px;
-    padding: 6px;
-    background: var(--b3-theme-background);
-  }
-
-  &__input-row {
-    gap: 8px;
-    align-items: stretch;
-  }
-
-  &__send-col {
+  &__thinking-label {
     gap: 4px;
-    justify-content: flex-start;
+    font-size: 11px;
+    user-select: none;
+    cursor: pointer;
   }
 }
 
-.jcag-msg {
-  margin-bottom: 8px;
-  font-size: 12px;
+.agent-msg {
+  margin-bottom: 14px;
+  font-size: 13px;
 
-  &__role {
+  &__head {
+    font-size: 11px;
     font-weight: 600;
-    opacity: 0.8;
-    margin-bottom: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    opacity: 0.55;
+    margin-bottom: 6px;
   }
 
-  pre {
+  &__text {
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
-    font-family: var(--b3-font-family-code);
-    font-size: 12px;
+    font-family: var(--b3-font-family);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--b3-theme-surface);
   }
 
-  &--assistant &__body {
+  &--user .agent-msg__text {
+    background: var(--b3-theme-primary-lightest);
     color: var(--b3-theme-on-background);
   }
 
-  &__body.b3-typography {
-    font-size: 12px;
-    line-height: 1.45;
-  }
-
-  &__reasoning-host:empty {
-    display: none;
-  }
-
-  &__reasoning {
-    margin-bottom: 6px;
-    opacity: 0.85;
+  &--tool .agent-msg__text {
+    font-family: var(--b3-font-family-code);
     font-size: 11px;
-    border-left: 2px solid var(--b3-border-color);
-    padding-left: 8px;
+    opacity: 0.9;
+    max-height: 200px;
+    overflow: auto;
+  }
+
+  &__think-wrap {
+    margin-bottom: 8px;
+    font-size: 11px;
+
+    summary {
+      cursor: pointer;
+      opacity: 0.65;
+      user-select: none;
+      margin-bottom: 4px;
+    }
+  }
+
+  &__reasoning:empty,
+  &__reasoning[hidden] {
+    display: none;
   }
 
   &__reasoning.b3-typography {
     font-size: 11px;
     line-height: 1.45;
+    opacity: 0.8;
+    border-left: 2px solid var(--b3-border-color);
+    padding-left: 8px;
   }
 
-  &--user pre {
-    color: var(--b3-theme-on-surface);
+  &__body.b3-typography {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--b3-theme-on-background);
+  }
+}
+
+.agent-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.agent-tool-card {
+  font-size: 11px;
+  border: 1px solid var(--b3-border-color);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--b3-theme-surface);
+
+  summary {
+    cursor: pointer;
+    font-weight: 500;
+    user-select: none;
   }
 
-  &__tools {
-    margin-top: 4px;
-    opacity: 0.85;
-    font-size: 11px;
-  }
-
-  &__footer {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 4px;
-  }
-
-  &--tool pre {
-    font-size: 11px;
+  pre {
+    margin: 6px 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--b3-font-family-code);
+    font-size: 10px;
+    max-height: 120px;
+    overflow: auto;
     opacity: 0.9;
   }
 }
