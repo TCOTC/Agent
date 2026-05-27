@@ -5,8 +5,11 @@
 @import "./styles/animations";
 
 .agent-dock-wrap {
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
   user-select: text;
   -webkit-user-select: text;
 }
