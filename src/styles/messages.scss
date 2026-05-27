@@ -72,6 +72,25 @@
     display: none;
   }
 
+  &__reasoning.b3-typography,
+  &__body.b3-typography {
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: hidden;
+
+    .table > div:first-child {
+      overflow-x: auto;
+      max-width: 100%;
+    }
+
+    table {
+      display: block;
+      max-width: 100%;
+      overflow-x: auto;
+      width: max-content;
+    }
+  }
+
   &__reasoning.b3-typography {
     font-size: 11px;
     opacity: 0.85;

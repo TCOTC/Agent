@@ -1,6 +1,9 @@
 .agent-shell {
+  flex: 1 1 0;
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   background: var(--b3-theme-background);
 }
 
@@ -69,7 +72,16 @@
 }
 
 .agent-main {
+  flex: 1 1 0;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+
+  &.fn__flex-1 {
+    overflow: hidden;
+  }
 
   &__header {
     align-items: center;
@@ -85,6 +97,7 @@
   }
 
   &__ctx {
+    flex-shrink: 0;
     flex-wrap: wrap;
     gap: 4px;
     padding: 4px 10px;
@@ -92,9 +105,16 @@
   }
 
   &__body {
+    flex: 1 1 0;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    display: block;
+
+    &.fn__flex-1 {
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
   }
 
   &__footer {
@@ -142,7 +162,6 @@
 }
 
 .agent-messages {
-  overflow: auto;
   padding: 12px 10px;
 }
 
@@ -173,7 +192,6 @@
 }
 
 .agent-timeline {
-  overflow: auto;
   padding: 8px;
 
   &__log {

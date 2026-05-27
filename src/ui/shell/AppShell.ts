@@ -84,10 +84,10 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     </header>
     <div class="agent-main__ctx fn__flex" data-ctx-chips></div>
     <div class="agent-main__body fn__flex-1" data-tab-chat>
-      <div class="agent-messages fn__flex-1" data-messages></div>
+      <div class="agent-messages" data-messages></div>
     </div>
     <div class="agent-main__body fn__flex-1 fn__none" data-tab-activity>
-      <div class="agent-timeline fn__flex-1" data-timeline></div>
+      <div class="agent-timeline" data-timeline></div>
     </div>
     <footer class="agent-main__footer">
       <span data-token-stats>Token —</span>
@@ -114,6 +114,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 </div>`;
 
     const elMessages = root.querySelector("[data-messages]") as HTMLElement;
+    const elChatBody = root.querySelector("[data-tab-chat]") as HTMLElement;
     const elTimeline = root.querySelector("[data-timeline]") as HTMLElement;
     const elSessionList = root.querySelector("[data-session-list]") as HTMLElement;
     const elInput = root.querySelector("[data-input]") as HTMLTextAreaElement;
@@ -320,7 +321,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
 
         if (seq === renderSeq) {
-            elMessages.scrollTop = elMessages.scrollHeight;
+            elChatBody.scrollTop = elChatBody.scrollHeight;
         }
     }
 
