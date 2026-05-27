@@ -1,26 +1,41 @@
-# Agent — 思源笔记 AI Agent 插件
+# Agent — 思源笔记 AI Agent 插件 v2.1
 
-专用于思源笔记的 DeepSeek Agent：多轮对话、工具调用、流式 Markdown 预览、自动风险分级与 Kramdown 精准编辑。
+专用于思源笔记的 **DeepSeek Agent**：Cursor 风格双栏侧栏、25 个工具、Diff 预览编辑、三档运行模式。
 
-## 配置
+## 功能亮点
 
-1. 在思源 **设置 → 插件 → Agent** 中填写 DeepSeek API Key。
-2. 模型列表通过 `GET /models` 自动拉取。
-3. 侧栏可切换模型、思考模式，并附带当前文档上下文。
+### 交互（对标 Cursor）
+- **左侧会话栏**：搜索、置顶、右键删除、导出 Markdown
+- **聊天 / 运行** 双 Tab：流式思考 + Protyle 预览 + 工具执行实时状态
+- **Composer**：`/` 斜杠命令、`@` 块引用搜索、上下文芯片、Ctrl+Enter 发送
+- **Diff 弹窗**：大段文档改写先 propose 再 apply
+- **重新生成 ↻**、导出对话 ↓
 
-## 数据目录
+### 运行模式
+| 模式 | 说明 |
+|------|------|
+| 问答 | 只读 + UI 导航 |
+| Agent | 全工具，低风险自动写入 |
+| 编辑 | 读写，侧重 propose/apply 与 Kramdown |
 
-插件 `data` 目录会保存：
+### 工具（25 个）
+读：Markdown 行范围、Kramdown、大纲、反向链接、属性、子块、搜索、最近文档、笔记本/文档列表  
+写：追加/插入/更新/Kramdown/移动/删除、创建/重命名文档、propose+apply 整篇 Diff  
+UI：打开文档、聚焦块  
+SQL：只读查询（带模板提示）
 
-- `settings.json` — API Key 与模型
-- `sessions.json` — 对话会话
-- `activity.jsonl` — 运行审计日志
-- `token-stats.json` — Token 用量统计
+### 安全
+- 风险分自动放行（可调上限）
+- 工作集限制笔记本
+- 删除/SQL/整篇 apply 需确认
+
+### 数据目录
+`settings.json` · `sessions.json` · `activity.jsonl` · `token-stats.json`
 
 ## 开发
 
 ```bash
-pnpm install
-pnpm dev    # 输出到插件根目录 index.js
-pnpm build  # 打包 dist/
+pnpm install && pnpm dev
 ```
+
+在思源中重载插件，设置 → Agent → 填写 DeepSeek API Key。

@@ -1,10 +1,9 @@
 /**
- * Agent 运行时类型：Tool 元数据、消息、审计、内核抽象。
+ * Tool 名称与运行时类型。
  */
 
 export type ToolSource = "builtin" | "mcp" | "plugin-extension";
 
-/** 风险等级 */
 export type ToolRisk = "read" | "ui" | "write" | "delete" | "sql";
 
 export interface ToolDefinition {
@@ -12,7 +11,6 @@ export interface ToolDefinition {
     description: string;
     parameters: Record<string, unknown>;
     risk: ToolRisk;
-    /** 无论风险分均须用户确认 */
     alwaysConfirm?: boolean;
     source: ToolSource;
 }
@@ -23,14 +21,25 @@ export const TOOL_NAMES = [
     "siyuan_read_kramdown",
     "siyuan_search_blocks",
     "siyuan_list_child_blocks",
+    "siyuan_get_doc_outline",
+    "siyuan_get_backlinks",
+    "siyuan_get_block_attributes",
+    "siyuan_get_recent_docs",
+    "siyuan_list_notebooks",
+    "siyuan_list_documents",
     "siyuan_open_document",
     "siyuan_focus_block",
     "siyuan_append_markdown",
+    "siyuan_insert_markdown",
     "siyuan_update_markdown",
     "siyuan_edit_block_kramdown",
-    "siyuan_delete_block",
     "siyuan_move_block",
-    "siyuan_insert_markdown",
+    "siyuan_set_block_attributes",
+    "siyuan_create_document",
+    "siyuan_rename_document",
+    "siyuan_propose_document_edit",
+    "siyuan_apply_document_edit",
+    "siyuan_delete_block",
     "siyuan_sql_query",
 ] as const;
 
@@ -75,7 +84,8 @@ export type AuditEvent =
     }
     | {kind: "tool_blocked"; name: string; reason: string}
     | {kind: "tool_confirm_required"; name: string; detail: string; riskScore: number}
-    | {kind: "tool_confirm_result"; name: string; approved: boolean};
+    | {kind: "tool_confirm_result"; name: string; approved: boolean}
+    | {kind: "pending_edit"; editId: string; docId: string; adds: number; removes: number};
 
 export interface KernelExecutor {
     post(url: string, body?: Record<string, unknown>): Promise<{
@@ -89,9 +99,10 @@ export interface DeepSeekConfig {
     baseUrl: string;
     apiKey: string;
     model: string;
-    /** 思考模式 */
     thinkingEnabled?: boolean;
     reasoningEffort?: "high" | "max";
+    /** 若提供则仅发送这些 tools */
+    tools?: ToolDefinition[];
 }
 
 export type ChatRole = "system" | "user" | "assistant" | "tool";
@@ -102,7 +113,8 @@ export interface ChatMessage {
     reasoning_content?: string | null;
     tool_calls?: OpenAiToolCallChunk[];
     tool_call_id?: string;
+    /** UI：工具执行状态 */
+    _toolStatus?: Record<string, "running" | "ok" | "fail">;
 }
 
-/** @deprecated 兼容旧名 */
 export type OpenAICompatibleConfig = DeepSeekConfig;

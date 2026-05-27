@@ -4,38 +4,32 @@ import {
     type AgentLlmFailure,
     type ChatCompletionStreamSnapshot,
 } from "./deepseekClient";
-import {getToolDefinitions} from "../tools/definitions";
+import {getToolDefinitionsForMode} from "../tools/registry";
 import {runTool, type ToolRunContext} from "../tools/executor";
 import type Agent from "../index";
+import type {AgentMode} from "./modes";
+import {buildModeSystemPrompt} from "./prompts/system";
+import {agentBus, AgentEvents} from "../core/eventBus";
 import type {AuditEvent, ChatMessage, DeepSeekConfig, KernelExecutor} from "./types";
+import type {ContextAttachment} from "../context/types";
 
 export interface RunAgentLoopParams {
     plugin: Agent;
     kernel?: KernelExecutor;
     llm: DeepSeekConfig;
+    mode: AgentMode;
     messages: ChatMessage[];
     userText: string;
     signal: AbortSignal;
     onAudit: (e: AuditEvent) => void;
     onStreamDelta?: () => void;
-    systemExtra?: string;
+    customInstructions?: string;
+    editorContext?: string;
+    attachments?: ContextAttachment[];
+    worksetNotebookIds?: string[];
+    riskAutoApproveMax?: number;
     requestConfirm: (title: string, detail: string) => Promise<boolean>;
-}
-
-function buildSystemPrompt(extra?: string): string {
-    const base =
-        "你是思源笔记（SiYuan）专业 Agent 助手，运行在用户本地工作空间中。\n\n" +
-        "## 能力\n" +
-        "- 使用工具读取/搜索文档（优先 siyuan_read_markdown 理解全文；需要保留块 ID 或精确结构时用 siyuan_read_kramdown）。\n" +
-        "- 简单追加用 siyuan_append_markdown；改单块文本用 siyuan_update_markdown；涉及块 ID、引用、容器结构时用 siyuan_edit_block_kramdown。\n" +
-        "- 打开文档 siyuan_open_document；定位块 siyuan_focus_block。\n" +
-        "- 删除、移动块前评估影响；SQL 仅只读。\n\n" +
-        "## 原则\n" +
-        "1. 先读后写，避免猜测文档内容。\n" +
-        "2. 回答简洁专业，使用中文。\n" +
-        "3. 低风险写入会自动执行；高风险操作会请求用户确认。\n" +
-        "4. 编辑时尽量保持块 ID 稳定，避免破坏双向链接与块引用。\n";
-    return extra ? `${base}\n${extra}` : base;
+    showDiffPreview?: (html: string, title: string) => Promise<boolean>;
 }
 
 export type RunAgentLoopOutcome =
@@ -53,22 +47,31 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
 
 async function runAgentLoopInner(p: RunAgentLoopParams): Promise<RunAgentLoopOutcome> {
     const kernel = p.kernel ?? createFetchSyncKernelExecutor();
-    const toolDefs = getToolDefinitions();
+    const toolDefs = getToolDefinitionsForMode(p.mode);
 
     p.onAudit({kind: "user_message", preview: p.userText.slice(0, 200)});
     p.messages.push({role: "user", content: p.userText});
 
-    const convo: ChatMessage[] = [
-        {role: "system", content: buildSystemPrompt(p.systemExtra)},
-        ...p.messages,
-    ];
+    const systemContent = buildModeSystemPrompt(p.mode, {
+        customInstructions: p.customInstructions,
+        editorContext: p.editorContext,
+        attachments: p.attachments,
+        worksetNotebooks: p.worksetNotebookIds,
+    });
+
+    const convo: ChatMessage[] = [{role: "system", content: systemContent}, ...p.messages];
 
     const toolCtx: ToolRunContext = {
         kernel,
         plugin: p.plugin,
         onAudit: p.onAudit,
         requestConfirm: p.requestConfirm,
+        worksetNotebookIds: p.worksetNotebookIds ?? [],
+        riskAutoApproveMax: p.riskAutoApproveMax ?? 35,
+        showDiffPreview: p.showDiffPreview,
     };
+
+    const llm: DeepSeekConfig = {...p.llm, tools: toolDefs};
 
     for (;;) {
         if (p.signal.aborted) {
@@ -77,7 +80,7 @@ async function runAgentLoopInner(p: RunAgentLoopParams): Promise<RunAgentLoopOut
         const tReq = performance.now();
         p.onAudit({
             kind: "llm_request",
-            model: p.llm.model,
+            model: llm.model,
             messageCount: convo.length,
             toolCount: toolDefs.length,
         });
@@ -96,10 +99,11 @@ async function runAgentLoopInner(p: RunAgentLoopParams): Promise<RunAgentLoopOut
             } else {
                 delete asst.tool_calls;
             }
+            agentBus.emit(AgentEvents.STREAM_DELTA);
             p.onStreamDelta?.();
         };
 
-        const completion = await deepseekChatCompletion(p.llm, convo, p.signal, applyStream);
+        const completion = await deepseekChatCompletion(llm, convo, p.signal, applyStream);
         if (completion.ok === false) {
             const empty =
                 (!asst.content || asst.content === "") &&
@@ -137,17 +141,20 @@ async function runAgentLoopInner(p: RunAgentLoopParams): Promise<RunAgentLoopOut
             return {kind: "completed"};
         }
 
+        asst._toolStatus = asst._toolStatus ?? {};
         for (const tc of toolCalls) {
+            asst._toolStatus[tc.id] = "running";
+            agentBus.emit(AgentEvents.MESSAGES_RENDER);
+
             const name = tc.function.name;
             const args = tc.function.arguments ?? "{}";
-            p.onAudit({
-                kind: "tool_call",
-                toolCallId: tc.id,
-                name,
-                argsPreview: args.slice(0, 400),
-            });
+            p.onAudit({kind: "tool_call", toolCallId: tc.id, name, argsPreview: args.slice(0, 400)});
             const t0 = performance.now();
             const run = await runTool(toolCtx, name, args);
+            asst._toolStatus[tc.id] = run.ok ? "ok" : "fail";
+            agentBus.emit(AgentEvents.TOOL_END, {name, ok: run.ok});
+            agentBus.emit(AgentEvents.MESSAGES_RENDER);
+
             p.onAudit({
                 kind: "tool_result",
                 toolCallId: tc.id,
@@ -158,13 +165,8 @@ async function runAgentLoopInner(p: RunAgentLoopParams): Promise<RunAgentLoopOut
                 riskScore: run.riskScore,
                 autoApproved: run.autoApproved,
             });
-            const toolMsg: ChatMessage = {
-                role: "tool",
-                tool_call_id: tc.id,
-                content: run.text,
-            };
-            convo.push(toolMsg);
-            p.messages.push(toolMsg);
+            convo.push({role: "tool", tool_call_id: tc.id, content: run.text});
+            p.messages.push({role: "tool", tool_call_id: tc.id, content: run.text});
         }
     }
 }

@@ -1,0 +1,73 @@
+.agent-diff-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.agent-diff-modal {
+  width: min(720px, 96vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--b3-theme-background);
+  border-radius: 10px;
+  box-shadow: var(--b3-dialog-shadow);
+  overflow: hidden;
+
+  &__head {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--b3-border-color);
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  &__body {
+    flex: 1;
+    overflow: auto;
+    padding: 8px;
+    font-family: var(--b3-font-family-code);
+    font-size: 11px;
+  }
+
+  &__foot {
+    padding: 8px 14px;
+    border-top: 1px solid var(--b3-border-color);
+    gap: 8px;
+    align-items: center;
+  }
+}
+
+.agent-diff {
+  &__line {
+    display: flex;
+    gap: 6px;
+    padding: 1px 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  &__no {
+    width: 28px;
+    text-align: right;
+    opacity: 0.45;
+    flex-shrink: 0;
+  }
+
+  &__prefix {
+    width: 12px;
+    flex-shrink: 0;
+  }
+
+  &__line--add {
+    background: rgba(46, 160, 67, 0.12);
+  }
+
+  &__line--remove {
+    background: rgba(248, 81, 73, 0.12);
+  }
+}

@@ -1,4 +1,4 @@
-import {DEEPSEEK_DEFAULT_BASE_URL} from "../core/constants";
+import {DEEPSEEK_DEFAULT_BASE_URL, RISK_AUTO_APPROVE_MAX} from "../core/constants";
 import type {PersistedSettings} from "./types";
 
 export const STORAGE_KEY_SETTINGS = "settings.json";
@@ -8,6 +8,10 @@ export const defaultSettings: PersistedSettings = {
     apiKey: "",
     model: "deepseek-v4-flash",
     thinkingEnabled: true,
+    customInstructions: "",
+    defaultMode: "agent",
+    worksetNotebookIds: [],
+    riskAutoApproveMax: RISK_AUTO_APPROVE_MAX,
 };
 
 type SettingsKey = keyof typeof defaultSettings;
@@ -19,6 +23,9 @@ function coerceSettingValue(
     defaultValue: PersistedSettings[SettingsKey],
 ): PersistedSettings[SettingsKey] {
     const kind = typeof defaultValue;
+    if (Array.isArray(defaultValue)) {
+        return Array.isArray(raw) ? (raw as PersistedSettings[SettingsKey]) : defaultValue;
+    }
     if (typeof raw === kind) {
         if (kind === "number" && Number.isNaN(raw as number)) {
             return defaultValue;

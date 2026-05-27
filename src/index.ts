@@ -28,7 +28,7 @@ export default class Agent extends Plugin {
         this.addDock({
             config: {
                 position: "RightBottom",
-                size: {width: 420, height: 520},
+                size: {width: 560, height: 560},
                 icon: "iconAgent",
                 title: "Agent",
                 hotkey: "⌥⌘A",

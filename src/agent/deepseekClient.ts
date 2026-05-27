@@ -1,5 +1,5 @@
-import {getToolDefinitions, toolsToDeepSeekFormat} from "../tools/definitions";
-import type {ChatMessage, DeepSeekConfig} from "./types";
+import {toolsToDeepSeekFormat} from "../tools/registry";
+import type {ChatMessage, DeepSeekConfig, ToolDefinition} from "./types";
 
 export type AgentLlmFailure =
     | {kind: "aborted"}
@@ -204,9 +204,12 @@ function buildRequestBody(cfg: DeepSeekConfig, messages: ChatMessage[]): Record<
         model: cfg.model,
         messages: messages.map(sanitizeForApi),
         stream: true,
-        tools: toolsToDeepSeekFormat(getToolDefinitions()),
-        tool_choice: "auto",
     };
+    const toolDefs: ToolDefinition[] = cfg.tools ?? [];
+    if (toolDefs.length) {
+        body.tools = toolsToDeepSeekFormat(toolDefs);
+        body.tool_choice = "auto";
+    }
     const thinking = cfg.thinkingEnabled !== false;
     if (thinking) {
         body.thinking = {type: "enabled"};
