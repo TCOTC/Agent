@@ -1,7 +1,7 @@
 import {openTab} from "siyuan";
 import type Agent from "../index";
 import type {AuditEvent, KernelExecutor, ToolConfirmRequest, ToolName} from "../agent/types";
-import {Constants} from "../core/editorContext";
+import {captureEditorContext, Constants, formatEditorContextForPrompt} from "../core/editorContext";
 import {agentBus, AgentEvents} from "../core/eventBus";
 import {computeLineDiff, diffSummary, renderDiffHtml} from "../editor/diffEngine";
 import {
@@ -250,6 +250,25 @@ export async function runTool(
                 mode: "readonly",
             });
             return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
+        }
+
+        if (toolName === "get_focused_editor") {
+            const snap = captureEditorContext();
+            const summary = formatEditorContextForPrompt(snap);
+            const body = snap.selectedText?.trim()
+                ? `${summary}\n\n选区文本：\n${snap.selectedText}`
+                : summary;
+            return {
+                text: wrapToolJson({
+                    rootId: snap.rootId ?? null,
+                    rootTitle: snap.rootTitle ?? null,
+                    focusedBlockId: snap.focusedBlockId ?? null,
+                    notebookId: snap.notebookId ?? null,
+                    path: snap.path ?? null,
+                    hasSelection: !!(snap.selectedText?.trim()),
+                }, body || "（无打开的编辑器焦点）"),
+                ok: true,
+            };
         }
 
         if (toolName === "list_notebooks") {

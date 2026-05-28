@@ -18,6 +18,7 @@ export function buildModeSystemPrompt(mode: AgentMode, extras: {
         modeBlock,
         "",
         "## 工具策略",
+        "- 当前编辑位置：get_focused_editor（思源 getActiveEditor，含文档根 ID、光标块、选区）",
         "- 理解文档：read_markdown（可指定行范围）→ 需要块 ID 时 get_doc_outline / list_child_blocks / read_kramdown",
         "- 探索结构：get_doc_outline、get_backlinks、list_child_blocks",
         "- **局部改（优先）**：先列出要动的块 ID；**2 个及以上同类操作优先批量工具**——",

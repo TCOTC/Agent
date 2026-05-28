@@ -93,6 +93,13 @@ export const READ_TOOLS: ToolDefinition[] = [
         risk: "read",
         source: "builtin",
     },
+    {
+        name: "get_focused_editor",
+        description: "获取当前聚焦编辑器：文档根 ID、标题、光标块 ID、路径、选区文本（通过思源 getActiveEditor）。无打开文档时返回空字段。",
+        parameters: obj({}),
+        risk: "read",
+        source: "builtin",
+    },
 ];
 
 export const STRUCTURE_TOOLS: ToolDefinition[] = [

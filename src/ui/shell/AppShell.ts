@@ -7,7 +7,7 @@ import {listDeepSeekModels} from "../../agent/deepseekClient";
 import {createFetchSyncKernelExecutor} from "../../agent/kernelExecutor";
 import {ActivityLogBuffer} from "../../core/activityLog";
 import {STORAGE_KEY_ACTIVITY, STORAGE_KEY_SESSIONS, STORAGE_KEY_TOKEN_STATS} from "../../core/constants";
-import {captureEditorContext, formatEditorContextForPrompt} from "../../core/editorContext";
+import {mountComposerDropdown} from "../composer/composerDropdown";
 import {agentBus, AgentEvents} from "../../core/eventBus";
 import {
     formatTokenBrief,
@@ -116,34 +116,50 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
       <div class="agent-timeline" data-timeline></div>
     </div>
     <div class="agent-composer">
-      <div class="agent-composer__toolbar fn__flex">
-        <div class="agent-mode-picker fn__flex" data-mode-picker role="group" aria-label="模式"></div>
-        <select class="agent-select agent-composer__model" data-model aria-label="模型"></select>
-      </div>
-      <div class="agent-composer__attach fn__flex" data-attach-bar>
-        <label class="agent-chip"><input type="checkbox" data-include-ctx checked /><span>当前文档</span></label>
-        <button type="button" class="agent-chip agent-chip--btn" data-add-doc>@ 附加文档</button>
-      </div>
-      <div class="agent-composer__input-wrap">
-        <textarea class="agent-input agent-composer__input" rows="3" data-input placeholder="Plan, @ for context, / for commands"></textarea>
-        <div class="agent-composer__menu fn__none" data-slash-menu></div>
-        <div class="agent-composer__menu fn__none" data-mention-menu></div>
-      </div>
-      <div class="agent-composer__bar fn__flex">
-        <div class="agent-context-wrap">
-          <button type="button" class="agent-context-ring" data-context-ring title="上下文占用" aria-label="上下文占用" aria-expanded="false">
-            <svg class="agent-context-ring__svg" viewBox="0 0 36 36" aria-hidden="true">
-              <circle class="agent-context-ring__track" cx="18" cy="18" r="15.5" fill="none"/>
-              <circle class="agent-context-ring__fill" cx="18" cy="18" r="15.5" fill="none" data-ring-fill/>
-            </svg>
-            <span class="agent-context-ring__pct" data-ring-pct>0</span>
-          </button>
-          <div class="agent-context-tray fn__none" data-context-tray role="tooltip" aria-label="上下文明细"></div>
+      <div class="agent-composer__card">
+        <div class="agent-context-card fn__none" data-context-card aria-label="上下文明细">
+          <header class="agent-context-card__head fn__flex">
+            <span class="agent-context-card__title">上下文</span>
+            <button type="button" class="agent-context-card__close" data-context-close title="关闭" aria-label="关闭">×</button>
+          </header>
+          <div class="agent-context-card__meta fn__flex">
+            <span data-context-pct-label></span>
+            <span class="fn__flex-1"></span>
+            <span data-context-token-range></span>
+          </div>
+          <div class="agent-context-card__bar" aria-hidden="true"><span data-context-bar-fill></span></div>
+          <div class="agent-context-card__body" data-context-card-body></div>
         </div>
-        <label class="agent-composer__think"><input type="checkbox" data-thinking checked /><span>思考</span></label>
-        <span class="fn__flex-1"></span>
-        <button type="button" class="agent-btn agent-btn--ghost" data-send>发送</button>
-        <button type="button" class="agent-btn agent-btn--stop" data-stop disabled>停止</button>
+        <div class="agent-composer__input-wrap">
+          <textarea class="agent-composer__input" rows="3" data-input placeholder="Plan, @ for context, / for commands"></textarea>
+          <div class="agent-composer__menu fn__none" data-slash-menu></div>
+          <div class="agent-composer__menu fn__none" data-mention-menu></div>
+        </div>
+        <div class="agent-composer__footer">
+          <div class="agent-composer__footer-start fn__flex">
+            <div data-mode-dropdown></div>
+            <div data-model-dropdown></div>
+          </div>
+          <div class="agent-composer__footer-end fn__flex">
+            <div class="agent-context-wrap">
+              <button type="button" class="agent-context-ring" data-context-ring title="上下文占用" aria-label="上下文占用" aria-expanded="false">
+                <svg class="agent-context-ring__svg" viewBox="0 0 28 28" aria-hidden="true">
+                  <circle class="agent-context-ring__track" cx="14" cy="14" r="11.5" fill="none"/>
+                  <circle class="agent-context-ring__fill" cx="14" cy="14" r="11.5" fill="none" data-ring-fill/>
+                </svg>
+                <span class="agent-context-ring__pct" data-ring-pct>0</span>
+              </button>
+            </div>
+            <button type="button" class="agent-composer__submit" data-submit title="发送" aria-label="发送">
+              <svg class="agent-composer__submit-icon" data-submit-icon-send width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+                <path fill="currentColor" d="M8 3.2 12.8 11H3.2L8 3.2z"/>
+              </svg>
+              <svg class="agent-composer__submit-icon fn__none" data-submit-icon-stop width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+                <rect fill="currentColor" x="4.5" y="4.5" width="7" height="7" rx="1"/>
+              </svg>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -166,23 +182,50 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const elSessionTitle = root.querySelector("[data-session-title]") as HTMLElement;
     const elSessionSearch = root.querySelector("[data-session-search]") as HTMLInputElement;
     const elInput = root.querySelector("[data-input]") as HTMLTextAreaElement;
-    const elModel = root.querySelector("[data-model]") as HTMLSelectElement;
-    const elModePicker = root.querySelector("[data-mode-picker]") as HTMLElement;
+    const elModeDropdown = root.querySelector("[data-mode-dropdown]") as HTMLElement;
+    const elModelDropdown = root.querySelector("[data-model-dropdown]") as HTMLElement;
     const elCtxChips = root.querySelector("[data-ctx-chips]") as HTMLElement;
     const elRingFill = root.querySelector("[data-ring-fill]") as SVGCircleElement;
     const elRingPct = root.querySelector("[data-ring-pct]") as HTMLElement;
-    const elContextTray = root.querySelector("[data-context-tray]") as HTMLElement;
+    const elContextCard = root.querySelector("[data-context-card]") as HTMLElement;
+    const elContextCardBody = root.querySelector("[data-context-card-body]") as HTMLElement;
+    const elContextPctLabel = root.querySelector("[data-context-pct-label]") as HTMLElement;
+    const elContextTokenRange = root.querySelector("[data-context-token-range]") as HTMLElement;
+    const elContextBarFill = root.querySelector("[data-context-bar-fill]") as HTMLElement;
+    const btnContextClose = root.querySelector("[data-context-close]") as HTMLButtonElement;
     const elSlashMenu = root.querySelector("[data-slash-menu]") as HTMLElement;
     const elMentionMenu = root.querySelector("[data-mention-menu]") as HTMLElement;
-    const btnSend = root.querySelector("[data-send]") as HTMLButtonElement;
-    const btnStop = root.querySelector("[data-stop]") as HTMLButtonElement;
+    const btnSubmit = root.querySelector("[data-submit]") as HTMLButtonElement;
+    const elSubmitIconSend = root.querySelector("[data-submit-icon-send]") as SVGElement;
+    const elSubmitIconStop = root.querySelector("[data-submit-icon-stop]") as SVGElement;
     const btnToggleRail = root.querySelector("[data-toggle-rail]") as HTMLButtonElement;
-    const chkThinking = root.querySelector("[data-thinking]") as HTMLInputElement;
-    const chkCtx = root.querySelector("[data-include-ctx]") as HTMLInputElement;
+    const RING_CIRC = 2 * Math.PI * 11.5;
+    let modelOptionIds: string[] = [];
 
-    const RING_CIRC = 2 * Math.PI * 15.5;
+    const getSettings = () => normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
+
+    const getSelectedModel = () => {
+        const s = getSettings();
+        return s.model || modelOptionIds[0] || "";
+    };
+
+    const isThinkingEnabled = () => getSettings().thinkingEnabled !== false;
+
+    const persistSettings = (patch: Partial<PersistedSettings>) => {
+        const s = {...getSettings(), ...patch};
+        plugin.data[STORAGE_KEY_SETTINGS] = s;
+        void plugin.saveData(STORAGE_KEY_SETTINGS, s);
+    };
 
     const isDestroyed = () => destroyed;
+
+    const setSubmitRunning = (running: boolean) => {
+        btnSubmit.classList.toggle("agent-composer__submit--stop", running);
+        btnSubmit.title = running ? "停止" : "发送";
+        btnSubmit.setAttribute("aria-label", running ? "停止" : "发送");
+        elSubmitIconSend.classList.toggle("fn__none", running);
+        elSubmitIconStop.classList.toggle("fn__none", !running);
+    };
 
     const persistSessions = () => {
         plugin.data[STORAGE_KEY_SESSIONS] = sessions;
@@ -232,7 +275,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const s = getActive();
         const u = s.tokenUsage;
         const settings = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
-        const model = elModel.value || settings.model;
+        const model = getSelectedModel() || settings.model;
         const contextLimit = getModelContextLimit(model, settings.modelContextLimits);
         const contextTokens = s.lastContextTokens
             ?? (u.promptTokens > 0 ? u.promptTokens : estimateMessageTokens(s.messages));
@@ -246,33 +289,91 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         elRingFill.style.strokeDashoffset = String(offset);
         elRingPct.textContent = pct >= 100 ? "满" : String(pct);
         const contextSource = hasApiContext ? "API" : contextTokens > 0 ? "估算" : "—";
-        elContextTray.innerHTML = `
-<ul class="agent-context-tray__list">
-<li><span>占用</span><span>${contextTokens.toLocaleString()} / ${contextLimit.toLocaleString()}（${pct}%）</span></li>
-<li><span>本轮</span><span>${contextSource}</span></li>
-<li><span>累计</span><span>${formatTokenBrief(u)}</span></li>
+        elContextPctLabel.textContent = pct >= 100 ? "已满" : `${pct}% 已用`;
+        elContextTokenRange.textContent =
+            `~${contextTokens.toLocaleString()} / ${contextLimit.toLocaleString()} Tokens`;
+        elContextBarFill.style.width = `${pct}%`;
+        elContextCardBody.innerHTML = `
+<ul class="agent-context-card__list">
+<li><span class="agent-context-card__dot agent-context-card__dot--prompt"></span><span class="agent-context-card__name">上下文窗口</span><span class="agent-context-card__val">${contextTokens.toLocaleString()}</span></li>
+<li><span class="agent-context-card__dot agent-context-card__dot--round"></span><span class="agent-context-card__name">本轮统计</span><span class="agent-context-card__val">${contextSource}</span></li>
+<li><span class="agent-context-card__dot agent-context-card__dot--total"></span><span class="agent-context-card__name">累计 Token</span><span class="agent-context-card__val">${formatTokenBrief(u)}</span></li>
 </ul>
-<p class="agent-context-tray__note">用量来自 API；窗口上限见插件设置。</p>`;
+<p class="agent-context-card__note">用量来自 API；窗口上限见插件设置。</p>`;
     };
 
-    const renderModePicker = () => {
-        const mode = getActive().mode;
-        elModePicker.innerHTML = AGENT_MODES.map((m) =>
-            `<button type="button" class="agent-mode-picker__btn${m.id === mode ? " agent-mode-picker__btn--active" : ""}"
-              data-mode-id="${m.id}" title="${esc(m.description)}">${m.label}</button>`,
-        ).join("");
+    const btnContextRing = root.querySelector("[data-context-ring]") as HTMLButtonElement;
+
+    const closeContextCard = () => {
+        elContextCard.classList.add("fn__none");
+        btnContextRing.setAttribute("aria-expanded", "false");
     };
 
-    elModePicker.addEventListener("click", (e) => {
-        const btn = (e.target as HTMLElement).closest("[data-mode-id]") as HTMLElement | null;
-        if (!btn) {
-            return;
+    const toggleContextCard = () => {
+        const willOpen = elContextCard.classList.contains("fn__none");
+        if (willOpen) {
+            updateContextRing();
+            elContextCard.classList.remove("fn__none");
+            btnContextRing.setAttribute("aria-expanded", "true");
+        } else {
+            closeContextCard();
         }
-        const id = btn.dataset.modeId as AgentMode;
-        getActive().mode = id;
-        persistSessions();
-        renderModePicker();
-        renderSessionList();
+    };
+
+    const modeDropdown = mountComposerDropdown<AgentMode>({
+        host: elModeDropdown,
+        ariaLabel: "模式",
+        onOpen: () => closeContextCard(),
+        getValue: () => getActive().mode,
+        getOptions: () => AGENT_MODES.map((m) => ({
+            value: m.id,
+            label: m.label,
+            hint: m.description,
+        })),
+        onChange: (id) => {
+            getActive().mode = id;
+            persistSessions();
+            renderSessionList();
+            modeDropdown.refresh();
+        },
+    });
+
+    const modelDropdown = mountComposerDropdown<string>({
+        host: elModelDropdown,
+        ariaLabel: "模型",
+        onOpen: () => closeContextCard(),
+        getValue: () => getSelectedModel(),
+        getOptions: () => {
+            const cur = getSelectedModel();
+            const ids = modelOptionIds.length ? modelOptionIds : (cur ? [cur] : []);
+            return ids.map((id) => ({value: id, label: id}));
+        },
+        onChange: (id) => {
+            persistSettings({model: id});
+            updateContextRing();
+            modelDropdown.refresh();
+        },
+        renderMenuFooter: (footer) => {
+            const title = document.createElement("div");
+            title.className = "b3-menu__labels";
+            title.textContent = "选项";
+            const row = document.createElement("label");
+            row.className = "b3-menu__item";
+            const label = document.createElement("span");
+            label.className = "fn__flex-center";
+            label.textContent = "思考";
+            const space = document.createElement("span");
+            space.className = "fn__space fn__flex-1";
+            const input = document.createElement("input");
+            input.type = "checkbox";
+            input.className = "b3-switch b3-switch--menu";
+            input.checked = isThinkingEnabled();
+            input.addEventListener("change", () => {
+                persistSettings({thinkingEnabled: input.checked});
+            });
+            row.append(label, space, input);
+            footer.append(title, row);
+        },
     });
 
     const cycleMode = (dir: 1 | -1) => {
@@ -280,18 +381,20 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const next = AGENT_MODES[(idx + dir + AGENT_MODES.length) % AGENT_MODES.length];
         getActive().mode = next.id;
         persistSessions();
-        renderModePicker();
+        modeDropdown.refresh();
         renderSessionList();
     };
 
     const cycleModel = () => {
-        const opts = Array.from(elModel.options);
-        if (opts.length < 2) {
+        if (modelOptionIds.length < 2) {
             return;
         }
-        const i = elModel.selectedIndex;
-        elModel.selectedIndex = (i + 1) % opts.length;
-        elModel.dispatchEvent(new Event("change"));
+        const cur = getSelectedModel();
+        const i = modelOptionIds.indexOf(cur);
+        const next = modelOptionIds[(i + 1) % modelOptionIds.length];
+        persistSettings({model: next});
+        updateContextRing();
+        modelDropdown.refresh();
     };
 
     let activityFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -367,7 +470,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 persistSessions();
                 renderSessionList();
                 renderCtxChips();
-                renderModePicker();
+                modeDropdown.refresh();
                 updateSessionTitle();
                 void renderMessages();
                 updateContextRing();
@@ -643,19 +746,19 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     }
 
     const loadModels = async () => {
-        const settings = plugin.data[STORAGE_KEY_SETTINGS] as PersistedSettings;
+        const settings = getSettings();
         if (!settings.apiKey) {
-            elModel.innerHTML = `<option>${esc(settings.model)}</option>`;
+            modelOptionIds = settings.model ? [settings.model] : [];
+            modelDropdown.refresh();
             return;
         }
         try {
             const models = await listDeepSeekModels(settings);
-            elModel.innerHTML = models.map((m) =>
-                `<option value="${esc(m.id)}"${m.id === settings.model ? " selected" : ""}>${esc(m.id)}</option>`,
-            ).join("");
+            modelOptionIds = models.map((m) => m.id);
         } catch {
-            elModel.innerHTML = `<option>${esc(settings.model)}</option>`;
+            modelOptionIds = settings.model ? [settings.model] : [];
         }
+        modelDropdown.refresh();
     };
 
     const createNewSession = () => {
@@ -665,7 +768,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         sessions.activeId = s.id;
         persistSessions();
         renderSessionList();
-        renderModePicker();
+        modeDropdown.refresh();
         updateSessionTitle();
         void renderMessages();
     };
@@ -684,16 +787,11 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         hideMenus();
 
         const sess = getActive();
-        let editorCtx = "";
-        if (sess.includeEditorContext) {
-            editorCtx = formatEditorContextForPrompt(captureEditorContext());
-        }
         const attachments = await preloadAttachmentPreviews(kernel, sess.contextAttachments);
 
         abortCtl?.abort();
         abortCtl = new AbortController();
-        btnSend.disabled = true;
-        btnStop.disabled = false;
+        setSubmitRunning(true);
 
         try {
             const outcome = await runAgentLoop({
@@ -702,8 +800,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 llm: {
                     baseUrl: settings.baseUrl,
                     apiKey: settings.apiKey,
-                    model: elModel.value || settings.model,
-                    thinkingEnabled: chkThinking.checked,
+                    model: getSelectedModel() || settings.model,
+                    thinkingEnabled: isThinkingEnabled(),
                 },
                 messages: sess.messages,
                 userText: text,
@@ -715,7 +813,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                     updateContextRing();
                 },
                 customInstructions: [settings.customInstructions, sess.customInstructions].filter(Boolean).join("\n"),
-                editorContext: editorCtx,
                 attachments,
                 worksetNotebookIds: settings.worksetNotebookIds,
                 riskAutoApproveMax: settings.riskAutoApproveMax,
@@ -737,8 +834,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 plugin.showPluginMessage(outcome.message);
             }
         } finally {
-            btnSend.disabled = false;
-            btnStop.disabled = true;
+            setSubmitRunning(false);
             abortCtl = null;
             void renderMessages();
             if (regenerateAfterAbort) {
@@ -842,40 +938,20 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         });
     });
 
-    chkCtx.addEventListener("change", () => {
-        getActive().includeEditorContext = chkCtx.checked;
-        persistSessions();
-    });
-
-    root.querySelector("[data-add-doc]")?.addEventListener("click", () => {
-        const ctx = captureEditorContext();
-        if (!ctx.rootId) {
-            plugin.showPluginMessage("无当前文档");
-            return;
-        }
-        const s = getActive();
-        if (!s.contextAttachments.some((a) => a.id === ctx.rootId)) {
-            s.contextAttachments.push({
-                id: ctx.rootId,
-                kind: "document",
-                label: ctx.rootTitle ?? ctx.rootId,
-                addedAt: new Date().toISOString(),
-            });
-            persistSessions();
-            renderCtxChips();
-        }
-    });
-
-    const btnContextRing = root.querySelector("[data-context-ring]") as HTMLButtonElement;
     btnContextRing.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        const open = elContextTray.classList.toggle("fn__none");
-        btnContextRing.setAttribute("aria-expanded", String(!open));
+        modeDropdown.close();
+        modelDropdown.close();
+        toggleContextCard();
+    });
+    btnContextClose.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        closeContextCard();
     });
     const onShellClick = (ev: MouseEvent) => {
-        if (!(ev.target as HTMLElement).closest(".agent-context-wrap")) {
-            elContextTray.classList.add("fn__none");
-            btnContextRing.setAttribute("aria-expanded", "false");
+        const t = ev.target as HTMLElement;
+        if (!t.closest(".agent-context-wrap") && !t.closest("[data-context-card]")) {
+            closeContextCard();
         }
     };
     root.addEventListener("click", onShellClick);
@@ -938,14 +1014,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         hideMenus();
     });
 
-    btnSend.addEventListener("click", () => void runSend());
-    btnStop.addEventListener("click", () => {
-        if (!abortCtl) {
+    btnSubmit.addEventListener("click", () => {
+        if (abortCtl) {
+            abortCtl.abort();
+            getActiveAgentSession()?.abort();
+            cancelPendingInlineActions();
             return;
         }
-        abortCtl.abort();
-        getActiveAgentSession()?.abort();
-        cancelPendingInlineActions();
+        void runSend();
     });
     elInput.addEventListener("keydown", (ev) => {
         const sendKeyMode = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]).sendKeyMode;
@@ -964,27 +1040,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
         if (ev.key === "Escape") {
             hideMenus();
-            elContextTray.classList.add("fn__none");
+            closeContextCard();
         }
-    });
-
-    elModel.addEventListener("change", () => {
-        const s = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
-        s.model = elModel.value;
-        plugin.data[STORAGE_KEY_SETTINGS] = s;
-        void plugin.saveData(STORAGE_KEY_SETTINGS, s);
-        updateContextRing();
     });
 
     const offMessages = agentBus.on(AgentEvents.MESSAGES_RENDER, () => scheduleStreamRender());
     const offStream = agentBus.on(AgentEvents.STREAM_DELTA, () => scheduleStreamRender());
 
-    const settings = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
-    chkThinking.checked = settings.thinkingEnabled !== false;
-    getActive().includeEditorContext = getActive().includeEditorContext ?? true;
-    chkCtx.checked = getActive().includeEditorContext;
-
-    renderModePicker();
+    modeDropdown.refresh();
     renderSessionList();
     renderCtxChips();
     updateSessionTitle();
@@ -1001,6 +1064,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         bindInlineToolActionHandlers(null);
         cancelPendingInlineActions();
         abortCtl?.abort();
+        modeDropdown.destroy();
+        modelDropdown.destroy();
         root.removeEventListener("click", onShellClick);
         offMessages();
         offStream();

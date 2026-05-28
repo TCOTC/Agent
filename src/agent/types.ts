@@ -25,6 +25,7 @@ export const TOOL_NAMES = [
     "get_backlinks",
     "get_block_attributes",
     "get_recent_docs",
+    "get_focused_editor",
     "list_notebooks",
     "list_documents",
     "open_document",
