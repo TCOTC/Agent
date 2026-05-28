@@ -1,4 +1,4 @@
-import {Editor} from "@tiptap/core";
+import {Editor, type JSONContent} from "@tiptap/core";
 import Document from "@tiptap/extension-document";
 import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
@@ -24,13 +24,17 @@ import {
     openComposerMentionMenu,
     updateComposerMentionMenu,
 } from "./mentionMenu";
+import {handleComposerCopy, handleComposerPaste} from "./composerClipboard";
 
 export interface ComposerEditorHandle {
     focus: () => void;
     destroy: () => void;
     getSendText: () => string;
+    getDocumentJSON: () => JSONContent;
+    hasVisibleContent: () => boolean;
     clear: () => void;
     setSendText: (text: string) => void;
+    setDocumentJSON: (json: JSONContent | null | undefined) => void;
     isSuggestionActive: () => boolean;
 }
 
@@ -41,6 +45,8 @@ export interface MountComposerEditorOptions {
     placeholder?: string;
     sendKeyMode: SendKeyMode;
     onSend: () => void;
+    /** 内容变化时回调（用于持久化草稿） */
+    onDraftChange?: () => void;
 }
 
 function blockRefDisplayLabel(attrs: {id?: string | null; label?: string | null}): string {
@@ -131,22 +137,117 @@ function focusComposerAtContentStart(editor: Editor): void {
     editor.view.focus();
 }
 
-function isClickInEditorHostLeftPadding(host: HTMLElement, event: MouseEvent): boolean {
-    const rect = host.getBoundingClientRect();
-    const padLeft = parseFloat(getComputedStyle(host).paddingLeft) || 0;
-    return event.clientX < rect.left + padLeft;
+function getHostContentInsets(host: HTMLElement): {left: number; right: number; top: number; bottom: number} {
+    const style = getComputedStyle(host);
+    return {
+        left: parseFloat(style.paddingLeft) || 0,
+        right: parseFloat(style.paddingRight) || 0,
+        top: parseFloat(style.paddingTop) || 0,
+        bottom: parseFloat(style.paddingBottom) || 0,
+    };
 }
 
+/** 行尾空白处 posAtCoords 常会落到行首；仅在需要靠右落点时纠正 */
+function resolveComposerPosWithHorizontalBias(
+    doc: Editor["state"]["doc"],
+    $pos: ReturnType<typeof doc.resolve>,
+    bias: "end" | null,
+): ReturnType<typeof doc.resolve> {
+    if (bias !== "end" || $pos.parent.type.name !== "paragraph") {
+        return $pos;
+    }
+    const lineStart = $pos.start();
+    const lineEnd = lineStart + $pos.parent.content.size;
+    if ($pos.parent.content.size > 0 && $pos.pos <= lineStart) {
+        return doc.resolve(lineEnd);
+    }
+    return $pos;
+}
+
+function focusComposerAtCoords(
+    editor: Editor,
+    clientX: number,
+    clientY: number,
+    opts?: {horizontalBias?: "end" | null},
+): void {
+    const view = editor.view;
+    const contentRect = view.dom.getBoundingClientRect();
+    const x = Math.max(contentRect.left + 1, Math.min(contentRect.right - 1, clientX));
+    const y = Math.max(contentRect.top + 1, Math.min(contentRect.bottom - 1, clientY));
+    const hit = view.posAtCoords({left: x, top: y});
+    if (hit) {
+        let $pos = view.state.doc.resolve(hit.pos);
+        const beforeBias = $pos.pos;
+        $pos = resolveComposerPosWithHorizontalBias(view.state.doc, $pos, opts?.horizontalBias ?? null);
+        const selBias =
+            $pos.pos !== beforeBias ? -1 : hit.inside === -1 ? -1 : 1;
+        const sel = TextSelection.near($pos, selBias);
+        view.dispatch(view.state.tr.setSelection(sel));
+        view.focus();
+        return;
+    }
+    focusComposerAtContentStart(editor);
+}
+
+/** 点击 host 内边距：将坐标钳到内容区边缘，再按点击位置落光标 */
+function focusComposerAtHostClick(
+    editor: Editor,
+    host: HTMLElement,
+    clientX: number,
+    clientY: number,
+): void {
+    const hostRect = host.getBoundingClientRect();
+    const insets = getHostContentInsets(host);
+    const contentLeft = hostRect.left + insets.left;
+    const contentRight = hostRect.right - insets.right;
+    const contentTop = hostRect.top + insets.top;
+    const contentBottom = hostRect.bottom - insets.bottom;
+
+    let x = clientX;
+    let y = clientY;
+    let horizontalBias: "end" | null = null;
+
+    if (clientX < contentLeft) {
+        x = contentLeft + 1;
+    } else if (clientX > contentRight) {
+        x = contentRight - 1;
+        horizontalBias = "end";
+    }
+    if (clientY < contentTop) {
+        y = contentTop + 1;
+    } else if (clientY > contentBottom) {
+        y = contentBottom - 1;
+    }
+
+    focusComposerAtCoords(editor, x, y, {horizontalBias});
+}
+
+/** 点击 agent-composer__editor 内边距时，将光标落到靠近点击位置 */
 function handleComposerEditorHostMouseDown(
     host: HTMLElement,
     editor: Editor,
     event: MouseEvent,
 ): void {
-    if (event.button !== 0 || !isClickInEditorHostLeftPadding(host, event)) {
+    if (event.button !== 0) {
         return;
     }
+    const view = editor.view;
+    const target = event.target as HTMLElement;
+    if (target !== host && view.dom.contains(target)) {
+        return;
+    }
+    const hostRect = host.getBoundingClientRect();
+    if (
+        event.clientX < hostRect.left
+        || event.clientX > hostRect.right
+        || event.clientY < hostRect.top
+        || event.clientY > hostRect.bottom
+    ) {
+        return;
+    }
+
     event.preventDefault();
-    focusComposerAtContentStart(editor);
+    focusComposerAtHostClick(editor, host, event.clientX, event.clientY);
 }
 
 function placeCursorBeforeDom(view: EditorView, dom: Node): boolean {
@@ -328,6 +429,8 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
             handleDOMEvents: {
                 mousedown: (view, event) =>
                     handleComposerChipPointerDown(view, event as MouseEvent),
+                copy: (view, event) => handleComposerCopy(view, event as ClipboardEvent),
+                paste: (_view, event) => handleComposerPaste(editor, event as ClipboardEvent),
             },
             handleClick: (_view, _pos, event) => {
                 if ((event.target as HTMLElement).closest?.("[data-action=\"remove\"]")) {
@@ -372,8 +475,18 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
         root.classList.toggle("is-editor-empty", empty);
         root.style.setProperty("--agent-composer-placeholder", JSON.stringify(placeholderText));
     };
-    editor.on("create", syncEditorEmptyClass);
-    editor.on("update", syncEditorEmptyClass);
+    const notifyDraftChange = () => {
+        opts.onDraftChange?.();
+    };
+
+    editor.on("create", () => {
+        syncEditorEmptyClass();
+        notifyDraftChange();
+    });
+    editor.on("update", () => {
+        syncEditorEmptyClass();
+        notifyDraftChange();
+    });
     syncEditorEmptyClass();
 
     const onEditorHostMouseDown = (event: MouseEvent) => {
@@ -388,6 +501,8 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
             editor.destroy();
         },
         getSendText: () => serializeComposerSendText(editor),
+        getDocumentJSON: () => editor.getJSON(),
+        hasVisibleContent: () => composerDocHasVisibleContent(editor.state.doc),
         clear: () => editor.commands.clearContent(),
         setSendText: (text: string) => {
             const lines = text.split("\n");
@@ -396,6 +511,14 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
                 content: line ? [{type: "text" as const, text: line}] : [],
             }));
             editor.commands.setContent({type: "doc", content});
+        },
+        setDocumentJSON: (json) => {
+            if (!json || json.type !== "doc") {
+                editor.commands.clearContent();
+            } else {
+                editor.commands.setContent(json);
+            }
+            syncEditorEmptyClass();
         },
         isSuggestionActive,
     };

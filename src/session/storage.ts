@@ -37,6 +37,10 @@ export function normalizeSessions(raw: unknown): SessionsPersisted {
         tokenUsage: s.tokenUsage ?? emptyUsage(),
         lastContextTokens: typeof s.lastContextTokens === "number" ? s.lastContextTokens : undefined,
         messages: Array.isArray(s.messages) ? s.messages : [],
+        composerDraft:
+            s.composerDraft && typeof s.composerDraft === "object" && s.composerDraft.type === "doc"
+                ? s.composerDraft
+                : undefined,
     }));
     const activeId = o.activeId && sessions.some((x) => x.id === o.activeId)
         ? o.activeId

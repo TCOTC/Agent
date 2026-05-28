@@ -457,11 +457,16 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             btn.innerHTML = `<span class="agent-rail__item-title fn__ellipsis">${s.pinned ? "📌 " : ""}${titleHtml}</span>
 <span class="agent-rail__item-meta">${AGENT_MODES.find((m) => m.id === s.mode)?.label ?? "智能体"}</span>`;
             btn.addEventListener("click", () => {
+                if (s.id === sessions.activeId) {
+                    return;
+                }
+                flushComposerDraft();
                 sessions.activeId = s.id;
                 persistSessions();
                 renderSessionList();
                 modeDropdown.refresh();
                 updateSessionTitle();
+                restoreComposerDraft();
                 void renderMessages();
                 updateContextRing();
             });
@@ -797,14 +802,57 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     const getSendKeyMode = () => normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]).sendKeyMode;
 
-    const composerEditor: ComposerEditorHandle = mountComposerEditor({
+    let composerDraftTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const applyComposerDraftToActiveSession = () => {
+        const session = getActive();
+        if (composerEditor.hasVisibleContent()) {
+            session.composerDraft = composerEditor.getDocumentJSON();
+        } else {
+            delete session.composerDraft;
+        }
+    };
+
+    const flushComposerDraft = () => {
+        if (composerDraftTimer !== null) {
+            clearTimeout(composerDraftTimer);
+            composerDraftTimer = null;
+        }
+        applyComposerDraftToActiveSession();
+        persistSessions();
+    };
+
+    const scheduleComposerDraftPersist = () => {
+        if (composerDraftTimer !== null) {
+            clearTimeout(composerDraftTimer);
+        }
+        const sessionId = sessions.activeId;
+        composerDraftTimer = setTimeout(() => {
+            composerDraftTimer = null;
+            if (sessionId !== sessions.activeId) {
+                return;
+            }
+            applyComposerDraftToActiveSession();
+            persistSessions();
+        }, 400);
+    };
+
+    const restoreComposerDraft = () => {
+        const session = getActive();
+        composerEditor.setDocumentJSON(session.composerDraft ?? null);
+    };
+
+    let composerEditor: ComposerEditorHandle = mountComposerEditor({
         editorHost: elComposerEditor,
         app: plugin.app,
         kernel,
         placeholder: "说点什么…",
         sendKeyMode: getSendKeyMode(),
         onSend: () => void runSend(),
+        onDraftChange: scheduleComposerDraftPersist,
     });
+
+    restoreComposerDraft();
 
     const runSend = async (opts?: {text?: string; truncateFrom?: ChatMessage}) => {
         const text = (opts?.text ?? composerEditor.getSendText()).trim();
@@ -818,6 +866,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
         if (!opts?.text) {
             composerEditor.clear();
+            delete getActive().composerDraft;
         }
         if (opts?.truncateFrom) {
             truncateFromMessage(opts.truncateFrom);
@@ -1072,7 +1121,12 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         abortCtl?.abort();
         modeDropdown.destroy();
         modelDropdown.destroy();
+        flushComposerDraft();
         composerEditor.destroy();
+        if (composerDraftTimer !== null) {
+            clearTimeout(composerDraftTimer);
+            composerDraftTimer = null;
+        }
         root.removeEventListener("click", onShellClick);
         offMessages();
         offStream();
