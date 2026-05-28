@@ -41,6 +41,22 @@
     line-height: 1.5;
     color: var(--b3-theme-on-background);
 
+    ::selection {
+      background: var(--b3-theme-primary-lightest);
+      color: inherit;
+    }
+
+    // 空文档仅有 trailingBreak，全选时浏览器仍可能画出细条选区
+    &.is-editor-empty {
+      ::selection {
+        background: transparent;
+      }
+
+      br.ProseMirror-trailingBreak {
+        outline: none;
+      }
+    }
+
     p {
       margin: 0;
     }
@@ -64,6 +80,10 @@
     }
 
     // NodeView 芯片与同行文字共用行盒，避免 baseline + 固定高度导致相对光标上偏
+    p > .agent-block-ref-chip:first-child {
+      margin-left: 1px;
+    }
+
     .agent-block-ref-chip {
       display: inline-flex;
       align-items: center;
@@ -79,6 +99,13 @@
       font-size: inherit;
       line-height: inherit;
       user-select: none;
+      transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+
+      &--selected {
+        background: var(--b3-theme-primary-lightest);
+        border-color: var(--b3-theme-primary);
+        box-shadow: 0 0 0 1px var(--b3-theme-primary-lighter);
+      }
 
       &__lead {
         position: relative;

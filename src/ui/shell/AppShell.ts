@@ -801,7 +801,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         editorHost: elComposerEditor,
         app: plugin.app,
         kernel,
-        placeholder: "说点什么…，@ 引用块可点击跳转",
+        placeholder: "说点什么…",
         sendKeyMode: getSendKeyMode(),
         onSend: () => void runSend(),
     });

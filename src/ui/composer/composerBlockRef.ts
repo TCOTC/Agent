@@ -1,5 +1,6 @@
 import Mention from "@tiptap/extension-mention";
 import {mergeAttributes} from "@tiptap/core";
+import {NodeSelection} from "@tiptap/pm/state";
 
 import {createSiyuanSvgIcon, getIconByType} from "../../siyuan/blockIcon";
 
@@ -16,6 +17,8 @@ function displayLabel(attrs: {id?: string | null; label?: string | null}): strin
 export function createComposerBlockRefExtension(options: ComposerBlockRefOptions = {}) {
     const onRemove = options.onRemove;
     return Mention.extend({
+        selectable: true,
+
         addOptions() {
             return {
                 ...this.parent?.(),
@@ -50,6 +53,7 @@ export function createComposerBlockRefExtension(options: ComposerBlockRefOptions
 
         addNodeView() {
             return ({node, getPos, editor}) => {
+                let currentNode = node;
                 const chip = document.createElement("span");
                 chip.className = "agent-block-ref-chip";
                 chip.contentEditable = "false";
@@ -103,8 +107,72 @@ export function createComposerBlockRefExtension(options: ComposerBlockRefOptions
                 lead.addEventListener("mousedown", onRemoveClick);
                 lead.addEventListener("click", onRemoveClick);
 
+                const isChipInTextSelection = (pos: number): boolean => {
+                    const {selection} = editor.state;
+                    const {from, to} = selection;
+                    if (from === to) {
+                        return false;
+                    }
+                    let hasTextInRange = false;
+                    editor.state.doc.nodesBetween(from, to, (n) => {
+                        if (n.isText && n.text?.replace(/\u200b/g, "").length) {
+                            hasTextInRange = true;
+                            return false;
+                        }
+                        if (n.type.name === "mention") {
+                            hasTextInRange = true;
+                            return false;
+                        }
+                        return undefined;
+                    });
+                    if (!hasTextInRange) {
+                        return false;
+                    }
+                    return from < pos + currentNode.nodeSize && to > pos;
+                };
+
+                const syncSelected = () => {
+                    const pos = getPos();
+                    if (typeof pos !== "number") {
+                        return;
+                    }
+                    const {selection} = editor.state;
+                    const nodeSelected = selection instanceof NodeSelection && selection.from === pos;
+                    const inRange = isChipInTextSelection(pos);
+                    chip.classList.toggle("agent-block-ref-chip--selected", nodeSelected || inRange);
+                };
+
+                const onSelectionUpdate = () => syncSelected();
+                editor.on("selectionUpdate", onSelectionUpdate);
+                syncSelected();
+
                 return {
                     dom: chip,
+                    update: (updatedNode) => {
+                        if (updatedNode.type !== currentNode.type) {
+                            return false;
+                        }
+                        currentNode = updatedNode;
+                        ref.textContent = displayLabel(updatedNode.attrs);
+                        chip.dataset.blockType = String(updatedNode.attrs.blockType ?? "NodeParagraph");
+                        if (updatedNode.attrs.blockSubtype) {
+                            chip.dataset.blockSubtype = String(updatedNode.attrs.blockSubtype);
+                        } else {
+                            delete chip.dataset.blockSubtype;
+                        }
+                        syncSelected();
+                        return true;
+                    },
+                    selectNode: () => {
+                        chip.classList.add("agent-block-ref-chip--selected");
+                    },
+                    deselectNode: () => {
+                        chip.classList.remove("agent-block-ref-chip--selected");
+                        syncSelected();
+                    },
+                    destroy: () => {
+                        editor.off("selectionUpdate", onSelectionUpdate);
+                    },
                     ignoreMutation: () => true,
                     stopEvent: (event) => {
                         const target = event.target as HTMLElement;

@@ -7,6 +7,8 @@ import {Placeholder} from "@tiptap/extensions/placeholder";
 import {UndoRedo} from "@tiptap/extensions/undo-redo";
 import type {SuggestionKeyDownProps, SuggestionProps} from "@tiptap/suggestion";
 import type {Node as ProseMirrorNode} from "@tiptap/pm/model";
+import {TextSelection} from "@tiptap/pm/state";
+import type {EditorView} from "@tiptap/pm/view";
 
 import type {App} from "siyuan";
 
@@ -49,6 +51,9 @@ function blockRefDisplayLabel(attrs: {id?: string | null; label?: string | null}
     return String(attrs.id ?? "");
 }
 
+/** 段首落点用，便于在块引用芯片前点击/输入；发送时剥离 */
+const COMPOSER_LEADING_ZWSP = "\u200b";
+
 function blockMentionMarkdown(label: string, blockId: string): string {
     const escLabel = label.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
     return `@[${escLabel}](siyuan://blocks/${blockId})`;
@@ -62,7 +67,7 @@ function inlineNodesToSendText(node: ProseMirrorNode): string {
             const label = String(child.attrs.label ?? id);
             out += blockMentionMarkdown(label, id);
         } else if (child.isText) {
-            out += child.text ?? "";
+            out += (child.text ?? "").replaceAll(COMPOSER_LEADING_ZWSP, "");
         } else if (child.type.name === "hardBreak") {
             out += "\n";
         }
@@ -79,6 +84,106 @@ export function serializeComposerSendText(editor: Editor): string {
         }
     });
     return parts.join("\n").trim();
+}
+
+/** 是否有用户输入（含空格；不含零宽占位与纯 trailingBreak） */
+function composerDocHasVisibleContent(doc: ProseMirrorNode): boolean {
+    let found = false;
+    doc.descendants((node) => {
+        if (node.type.name === "mention") {
+            found = true;
+            return false;
+        }
+        if (node.isText) {
+            const t = node.text?.replaceAll(COMPOSER_LEADING_ZWSP, "") ?? "";
+            if (t.length > 0) {
+                found = true;
+                return false;
+            }
+        }
+        return undefined;
+    });
+    return found;
+}
+
+function isParagraphContentStart(editor: Editor, pos: number): boolean {
+    const $pos = editor.state.doc.resolve(pos);
+    return $pos.parent.type.name === "paragraph" && $pos.parentOffset === 0;
+}
+
+function focusComposerAtContentStart(editor: Editor): void {
+    const {doc} = editor.state;
+    let paraPos = -1;
+    doc.descendants((node, pos) => {
+        if (node.type.name === "paragraph") {
+            paraPos = pos;
+            return false;
+        }
+        return undefined;
+    });
+    if (paraPos < 0) {
+        editor.commands.focus();
+        return;
+    }
+    const $pos = doc.resolve(paraPos + 1);
+    const sel = TextSelection.near($pos, -1);
+    editor.view.dispatch(editor.state.tr.setSelection(sel));
+    editor.view.focus();
+}
+
+function isClickInEditorHostLeftPadding(host: HTMLElement, event: MouseEvent): boolean {
+    const rect = host.getBoundingClientRect();
+    const padLeft = parseFloat(getComputedStyle(host).paddingLeft) || 0;
+    return event.clientX < rect.left + padLeft;
+}
+
+function handleComposerEditorHostMouseDown(
+    host: HTMLElement,
+    editor: Editor,
+    event: MouseEvent,
+): void {
+    if (event.button !== 0 || !isClickInEditorHostLeftPadding(host, event)) {
+        return;
+    }
+    event.preventDefault();
+    focusComposerAtContentStart(editor);
+}
+
+function placeCursorBeforeDom(view: EditorView, dom: Node): boolean {
+    const rawPos = view.posAtDOM(dom, 0);
+    if (rawPos == null) {
+        return false;
+    }
+    const $pos = view.state.doc.resolve(rawPos);
+    const sel = TextSelection.near($pos, -1);
+    view.dispatch(view.state.tr.setSelection(sel));
+    view.focus();
+    return true;
+}
+
+function handleComposerChipPointerDown(view: EditorView, event: MouseEvent): boolean {
+    if (event.button !== 0) {
+        return false;
+    }
+    const chip = (event.target as HTMLElement).closest(".agent-block-ref-chip");
+    if (chip) {
+        const rect = chip.getBoundingClientRect();
+        if (event.clientX > rect.left + 4) {
+            return false;
+        }
+        event.preventDefault();
+        return placeCursorBeforeDom(view, chip);
+    }
+    const para = (event.target as HTMLElement).closest("p");
+    const first = para?.firstElementChild;
+    if (first?.classList.contains("agent-block-ref-chip")) {
+        const rect = first.getBoundingClientRect();
+        if (event.clientX <= rect.left + 4) {
+            event.preventDefault();
+            return placeCursorBeforeDom(view, first);
+        }
+    }
+    return false;
 }
 
 function createMentionSuggestionRenderer(
@@ -117,6 +222,19 @@ function createMentionSuggestionRenderer(
         },
         onKeyDown: ({event}) => handleComposerMentionMenuKeyDown(event, pick),
     });
+}
+
+/** 空文档时 ProseMirror 的 trailingBreak 会被 Ctrl+A 选中并出现细条高亮 */
+function handleComposerSelectAll(editor: Editor, event: KeyboardEvent): boolean {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "a") {
+        return false;
+    }
+    if (composerDocHasVisibleContent(editor.state.doc)) {
+        return false;
+    }
+    event.preventDefault();
+    focusComposerAtContentStart(editor);
+    return true;
 }
 
 function handleSendKey(
@@ -182,7 +300,11 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
                     render: createMentionSuggestionRenderer(opts.editorHost),
                     command: ({editor: ed, range, props}) => {
                         const hit = props as BlockMentionHit;
-                        ed.chain().focus().insertContentAt(range, [
+                        const nodes: Array<Record<string, unknown>> = [];
+                        if (isParagraphContentStart(ed, range.from)) {
+                            nodes.push({type: "text", text: COMPOSER_LEADING_ZWSP});
+                        }
+                        nodes.push(
                             {
                                 type: "mention",
                                 attrs: {
@@ -193,7 +315,8 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
                                 },
                             },
                             {type: "text", text: " "},
-                        ]).run();
+                        );
+                        ed.chain().focus().insertContentAt(range, nodes).run();
                     },
                 },
             }),
@@ -201,6 +324,10 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
         editorProps: {
             attributes: {
                 class: "agent-composer__pm",
+            },
+            handleDOMEvents: {
+                mousedown: (view, event) =>
+                    handleComposerChipPointerDown(view, event as MouseEvent),
             },
             handleClick: (_view, _pos, event) => {
                 if ((event.target as HTMLElement).closest?.("[data-action=\"remove\"]")) {
@@ -228,6 +355,9 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
                 return true;
             },
             handleKeyDown: (_view, event) => {
+                if (handleComposerSelectAll(editor, event)) {
+                    return true;
+                }
                 if (handleSendKey(event, editor, opts.sendKeyMode, opts.onSend, isSuggestionActive)) {
                     return true;
                 }
@@ -238,16 +368,25 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
 
     const syncEditorEmptyClass = () => {
         const root = editor.view.dom;
-        root.classList.toggle("is-editor-empty", editor.isEmpty);
+        const empty = !composerDocHasVisibleContent(editor.state.doc);
+        root.classList.toggle("is-editor-empty", empty);
         root.style.setProperty("--agent-composer-placeholder", JSON.stringify(placeholderText));
     };
     editor.on("create", syncEditorEmptyClass);
     editor.on("update", syncEditorEmptyClass);
     syncEditorEmptyClass();
 
+    const onEditorHostMouseDown = (event: MouseEvent) => {
+        handleComposerEditorHostMouseDown(opts.editorHost, editor, event);
+    };
+    opts.editorHost.addEventListener("mousedown", onEditorHostMouseDown);
+
     return {
         focus: () => editor.commands.focus(),
-        destroy: () => editor.destroy(),
+        destroy: () => {
+            opts.editorHost.removeEventListener("mousedown", onEditorHostMouseDown);
+            editor.destroy();
+        },
         getSendText: () => serializeComposerSendText(editor),
         clear: () => editor.commands.clearContent(),
         setSendText: (text: string) => {
