@@ -1,8 +1,12 @@
 import type {ChatMessage} from "../../agent/types";
 import {AGENT_ICON_IDS, agentIconHtml} from "../../icons/agentIcons";
 import type {LuteEngine} from "../../render/lute";
-import {forgetStreamMdCache} from "../../render/streamMdRender";
-import {syncAssistantContentDom, syncAssistantReasoningDom} from "../../render/streamingDom";
+import {forgetStreamMdCache, forgetStreamMdCacheByKind} from "../../render/streamMdRender";
+import {
+    clearStreamingDomHost,
+    syncAssistantContentDom,
+    syncAssistantReasoningDom,
+} from "../../render/streamingDom";
 import {readSessionIdFromMessagesEl} from "./inlineToolActions";
 import {renderAssistantConfirmBanner} from "./toolConfirmBanner";
 import {renderAssistantToolCalls} from "./toolCallUi";
@@ -19,6 +23,7 @@ type Patch = {
     confirmSig: string;
     diffSig: string;
     streamOpen: boolean;
+    thinkingMdOpen: boolean;
 };
 
 export function buildUserMessageRow(content: string): HTMLElement {
@@ -181,6 +186,7 @@ export function patchAssistantToolCallsOnly(row: HTMLElement, m: ChatMessage): v
             confirmSig,
             diffSig,
             streamOpen: m._mdStreaming === true,
+            thinkingMdOpen: m._thinkingMdOpen === true,
         };
     }
     patchAssistantTooling(row, m);
@@ -195,6 +201,7 @@ export async function patchAssistantRow(
     const reasoningRaw = m.reasoning_content ? String(m.reasoning_content) : "";
     const contentRaw = m.content ?? "";
     const mdStreaming = m._mdStreaming === true;
+    const thinkingMdOpen = m._thinkingMdOpen === true;
     const toolsSig = toolCallsSig(m, m._streaming === true);
     const statusSig = m._toolStatus ? JSON.stringify(m._toolStatus) : "";
     const resultsSig = toolResultsSig(m);
@@ -227,6 +234,7 @@ export async function patchAssistantRow(
         confirmSig,
         diffSig,
         streamOpen: mdStreaming,
+        thinkingMdOpen,
     };
 
     const think = row.querySelector(".agent-msg__think") as HTMLDetailsElement | null;
@@ -245,10 +253,29 @@ export async function patchAssistantRow(
     }
 
     const needStreamFinalize = prev != null && prev.streamOpen && !mdStreaming;
+    const thinkingEnd = prev != null && prev.thinkingMdOpen && !thinkingMdOpen;
     const reasoningChanged = !prev || prev.reasoning !== reasoningRaw;
     const contentChanged = !prev || prev.content !== contentRaw;
 
-    if (reasoningChanged || (needStreamFinalize && !!reasoningRaw)) {
+    if (thinkingEnd && reasoningRaw) {
+        forgetStreamMdCacheByKind(m, "reasoning");
+        const reasoningHost = row.querySelector(".agent-msg__reasoning") as HTMLElement | null;
+        if (reasoningHost) {
+            clearStreamingDomHost(reasoningHost);
+        }
+    }
+    if (needStreamFinalize) {
+        forgetStreamMdCache(m);
+        const reasoningHost = row.querySelector(".agent-msg__reasoning") as HTMLElement | null;
+        if (reasoningHost && !thinkingEnd) {
+            clearStreamingDomHost(reasoningHost);
+        }
+        const bodyEl = row.querySelector(".agent-msg__body") as HTMLElement | null;
+        if (bodyEl) {
+            clearStreamingDomHost(bodyEl);
+        }
+    }
+    if (reasoningChanged || thinkingEnd || (needStreamFinalize && !!reasoningRaw)) {
         await syncAssistantReasoningDom(row, m, lute, mdStreaming, destroyed);
         if (destroyed()) {
             return;

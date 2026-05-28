@@ -1,8 +1,5 @@
 import type {ChatMessage} from "../agent/types";
-import {
-    finalizeStreamingMdRemainder,
-    getStreamingAssistantMdParts,
-} from "./streamMdRender";
+import {getStreamingAssistantMdParts} from "./streamMdRender";
 import type {LuteEngine} from "./lute";
 import {renderProtyleBlock, renderProtyleBlockPending} from "./protyleBlockRender";
 
@@ -138,14 +135,14 @@ export function clearStreamingDomHost(blocksRoot: HTMLElement): void {
     hostGenerationByBlocksRoot.delete(blocksRoot);
     hostSyncPendingByBlocksRoot.delete(blocksRoot);
     hostSyncChainByBlocksRoot.delete(blocksRoot);
+    blocksRoot.replaceChildren();
 }
 
 function rebuildStreamingDomHost(
     blocksRoot: HTMLElement,
-    kind: "content" | "reasoning",
+    _kind: "content" | "reasoning",
 ): StreamingMdDom {
     clearStreamingDomHost(blocksRoot);
-    blocksRoot.replaceChildren();
     const dom: StreamingMdDom = {sealedBlocks: new Map(), tailBlocks: []};
     streamingMdDomByBlocksRoot.set(blocksRoot, dom);
     return dom;
@@ -161,7 +158,7 @@ async function performSyncStreamingMdHost(blocksRoot: HTMLElement, job: HostSync
     const gen = (hostGenerationByBlocksRoot.get(blocksRoot) ?? 0) + 1;
     hostGenerationByBlocksRoot.set(blocksRoot, gen);
 
-    const {sealedHtmlParts, tailHtml, cacheReset, tailThrottled} = await getStreamingAssistantMdParts(
+    const {sealedHtmlParts, tailHtml, cacheReset} = await getStreamingAssistantMdParts(
         m,
         fullMd,
         lute,
@@ -285,12 +282,6 @@ export async function syncAssistantReasoningDom(
 
     reasoningHost.hidden = false;
     const streamOpen = reasoningStreamOpen(m, mdStreaming);
-    if (!streamOpen) {
-        await finalizeStreamingMdRemainder(m, reasoningRaw, lute, "reasoning");
-        if (destroyed()) {
-            return;
-        }
-    }
     await syncStreamingMdHost(reasoningHost, m, reasoningRaw, lute, "reasoning", streamOpen, destroyed);
 }
 

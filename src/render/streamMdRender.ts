@@ -18,15 +18,12 @@ import {logger} from "../util";
 import type {ChatMessage} from "../agent/types";
 import type {LuteEngine} from "./lute";
 
-/** 流式 tail md2html 最小间隔（ms）；思考区与正文共用；封存循环保持开启以便逐块渲染特殊块 */
-const STREAM_TAIL_THROTTLE_MS = 100;
-
 export interface StreamMdComputeOptions {
     kind?: "content" | "reasoning";
     /** 流式思考阶段跳过 Md2BlockDOM 封存循环，thinking_end 时 finalize */
     skipSealLoop?: boolean;
-    /** tail md2html 节流，间隔内复用上一帧 HTML */
-    throttleTailMs?: number;
+    /** Markdown 通道仍在流式输出；为 false 时允许封存未以空行结尾的块 */
+    streamOpen?: boolean;
 }
 
 export interface StreamMdCache {
@@ -46,7 +43,6 @@ export interface StreamMdCache {
     /** 上一帧 tail Markdown / HTML，避免相同 tail 重复 md2html */
     lastTailMd?: string;
     lastTailHtml?: string;
-    lastTailMd2htmlAt?: number;
     inflight?: Promise<void>;
     pendingFullMd?: string;
     pendingOpts?: StreamMdComputeOptions;
@@ -60,19 +56,26 @@ export interface StreamingMdDomParts {
     tailHtml: string;
     /** 本帧是否因前缀失效而重置了封存缓存（须同步清空 DOM） */
     cacheReset: boolean;
-    /** tail md2html 是否因节流复用了上一帧 HTML */
-    tailThrottled?: boolean;
 }
 
-/** 按通道返回 compute 选项（流式时 tail md2html 节流，封存照常以便逐块特殊渲染） */
+/** 按通道返回 compute 选项（流式时仅封存以空行结尾的块） */
 export function streamMdOptsForHost(
     kind: "content" | "reasoning",
     streamOpen: boolean,
 ): StreamMdComputeOptions {
-    if (streamOpen) {
-        return {kind, throttleTailMs: STREAM_TAIL_THROTTLE_MS};
+    return {kind, streamOpen};
+}
+
+function fenceDelimiterCount(md: string): number {
+    return md.match(/```/g)?.length ?? 0;
+}
+
+/** 流式未结束时，仅当封存片段以段落空行结尾且围栏已闭合才提交 */
+function canSealMdDuringStream(sealedMd: string): boolean {
+    if (!/\n\n$/.test(sealedMd)) {
+        return false;
     }
-    return {kind};
+    return fenceDelimiterCount(sealedMd) % 2 === 0;
 }
 
 const streamCacheContent = new WeakMap<ChatMessage, StreamMdCache>();
@@ -232,37 +235,19 @@ function publishCacheSnapshot(c: StreamMdCache, fullMd: string): StreamingMdDomP
     return parts;
 }
 
-async function tailMarkdownToHtml(
-    c: StreamMdCache,
-    tail: string,
-    throttleTailMs?: number,
-): Promise<{html: string; throttled: boolean}> {
+async function tailMarkdownToHtml(c: StreamMdCache, tail: string): Promise<string> {
     if (!tail.trim()) {
         delete c.lastTailMd;
         delete c.lastTailHtml;
-        delete c.lastTailMd2htmlAt;
-        return {html: "", throttled: false};
+        return "";
     }
     if (tail === c.lastTailMd && c.lastTailHtml !== undefined) {
-        return {html: c.lastTailHtml, throttled: false};
-    }
-    const now = performance.now();
-    if (
-        throttleTailMs &&
-        throttleTailMs > 0 &&
-        c.lastTailHtml !== undefined &&
-        c.lastTailMd &&
-        tail !== c.lastTailMd &&
-        c.lastTailMd2htmlAt != null &&
-        now - c.lastTailMd2htmlAt < throttleTailMs
-    ) {
-        return {html: c.lastTailHtml, throttled: true};
+        return c.lastTailHtml;
     }
     const html = await markdownToProtylePreviewHtml(tail);
     c.lastTailMd = tail;
     c.lastTailHtml = html;
-    c.lastTailMd2htmlAt = now;
-    return {html, throttled: false};
+    return html;
 }
 
 async function computeStreamingMdParts(
@@ -273,6 +258,20 @@ async function computeStreamingMdParts(
 ): Promise<StreamingMdDomParts> {
     if (c.remainderFinalized && c.sealedLen === fullMd.length && c.lastParts) {
         return c.lastParts;
+    }
+
+    // 流式结束：整段 md2html，避免中途误封存残留在 DOM
+    if (opts?.streamOpen === false) {
+        resetCache(c);
+        const tailHtml = await tailMarkdownToHtml(c, fullMd);
+        c.sealedLen = fullMd.length;
+        c.remainderFinalized = true;
+        c.lastTailLen = 0;
+        return {
+            sealedHtmlParts: [],
+            tailHtml,
+            cacheReset: true,
+        };
     }
 
     let cacheReset = false;
@@ -293,6 +292,9 @@ async function computeStreamingMdParts(
                 break;
             }
             const sealedMd = tail.slice(0, L);
+            if (opts?.streamOpen && !canSealMdDuringStream(sealedMd)) {
+                break;
+            }
             c.sealedHtmlParts.push(await markdownToProtylePreviewHtml(sealedMd));
             c.sealedLen += L;
             tail = fullMd.slice(c.sealedLen);
@@ -300,12 +302,11 @@ async function computeStreamingMdParts(
     }
 
     c.lastTailLen = tail.length;
-    const {html: tailHtml, throttled} = await tailMarkdownToHtml(c, tail, opts?.throttleTailMs);
+    const tailHtml = await tailMarkdownToHtml(c, tail);
     return {
         sealedHtmlParts: c.sealedHtmlParts.slice(),
         tailHtml,
         cacheReset,
-        tailThrottled: throttled,
     };
 }
 
@@ -421,7 +422,11 @@ export async function renderStreamingAssistantMd(
     return p.sealedHtmlParts.join("") + p.tailHtml;
 }
 
+export function forgetStreamMdCacheByKind(msg: ChatMessage, kind: "content" | "reasoning"): void {
+    getCacheMap(kind).delete(msg);
+}
+
 export function forgetStreamMdCache(msg: ChatMessage): void {
-    streamCacheContent.delete(msg);
-    streamCacheReasoning.delete(msg);
+    forgetStreamMdCacheByKind(msg, "content");
+    forgetStreamMdCacheByKind(msg, "reasoning");
 }
