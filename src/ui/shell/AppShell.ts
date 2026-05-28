@@ -70,7 +70,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     let renderSeq = 0;
     let streamRaf = 0;
     let abortCtl: AbortController | null = null;
-    let regenerateAfterAbort = false;
+    let afterAbortAction: (() => void) | null = null;
     let railExpanded = false;
     const rowByMessage = new WeakMap<ChatMessage, HTMLElement>();
     const activityBuf = new ActivityLogBuffer();
@@ -704,9 +704,12 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             }
 
             if (m.role === "user") {
-                const pre = row.querySelector(".agent-msg__text");
-                if (pre) {
-                    pre.textContent = m.content ?? "";
+                const input = row.querySelector(".agent-msg__input") as HTMLTextAreaElement | null;
+                if (input && document.activeElement !== input) {
+                    const next = m.content ?? "";
+                    if (input.value !== next) {
+                        input.value = next;
+                    }
                 }
             } else if (m.role === "assistant") {
                 if (lute) {
@@ -776,8 +779,54 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         void renderMessages();
     };
 
-    const runSend = async () => {
-        const text = elInput.value.trim();
+    const findMessageForRow = (row: HTMLElement): ChatMessage | undefined => {
+        for (const msg of getActive().messages) {
+            if (rowByMessage.get(msg) === row) {
+                return msg;
+            }
+        }
+        return undefined;
+    };
+
+    const truncateFromMessage = (m: ChatMessage) => {
+        const s = getActive();
+        const idx = s.messages.indexOf(m);
+        if (idx < 0) {
+            return;
+        }
+        const removed = s.messages.splice(idx);
+        for (const msg of removed) {
+            clearAssistantCache(msg);
+        }
+        persistSessions();
+    };
+
+    const resendUserMessage = (row: HTMLElement) => {
+        const m = findMessageForRow(row);
+        if (!m || m.role !== "user") {
+            return;
+        }
+        const input = row.querySelector(".agent-msg__input") as HTMLTextAreaElement | null;
+        if (!input) {
+            return;
+        }
+        const text = input.value.trim();
+        if (!text) {
+            return;
+        }
+        const doResend = () => void runSend({text, truncateFrom: m});
+        if (abortCtl) {
+            afterAbortAction = doResend;
+            abortCtl.abort();
+            getActiveAgentSession()?.abort();
+            cancelPendingInlineActions();
+            return;
+        }
+        doResend();
+    };
+
+    const runSend = async (opts?: {text?: string; truncateFrom?: ChatMessage}) => {
+        const text = (opts?.text ?? elInput.value).trim();
         if (!text) {
             return;
         }
@@ -786,8 +835,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             plugin.showPluginMessage("请先配置 DeepSeek API Key");
             return;
         }
-        elInput.value = "";
+        if (!opts?.text) {
+            elInput.value = "";
+        }
         hideMenus();
+
+        if (opts?.truncateFrom) {
+            truncateFromMessage(opts.truncateFrom);
+        }
 
         const sess = getActive();
         const attachments = await preloadAttachmentPreviews(kernel, sess.contextAttachments);
@@ -840,9 +895,10 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             setSubmitRunning(false);
             abortCtl = null;
             void renderMessages();
-            if (regenerateAfterAbort) {
-                regenerateAfterAbort = false;
-                performRegenerate();
+            if (afterAbortAction) {
+                const fn = afterAbortAction;
+                afterAbortAction = null;
+                fn();
             }
         }
     };
@@ -900,13 +956,51 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     root.querySelector("[data-regenerate]")?.addEventListener("click", () => {
         if (abortCtl) {
-            regenerateAfterAbort = true;
+            afterAbortAction = () => performRegenerate();
             abortCtl.abort();
             getActiveAgentSession()?.abort();
             cancelPendingInlineActions();
             return;
         }
         performRegenerate();
+    });
+
+    elMessages.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) {
+            return;
+        }
+        const row = (e.target as HTMLElement).closest(".agent-msg--user") as HTMLElement | null;
+        if (!row) {
+            return;
+        }
+        const t = e.target as HTMLElement;
+        if (t.closest(".agent-msg__input") || t.closest("[data-user-resend]")) {
+            return;
+        }
+        const input = row.querySelector(".agent-msg__input") as HTMLTextAreaElement | null;
+        input?.focus();
+    });
+    elMessages.addEventListener("click", (e) => {
+        const btn = (e.target as HTMLElement).closest("[data-user-resend]");
+        if (!btn) {
+            return;
+        }
+        const row = btn.closest(".agent-msg--user") as HTMLElement | null;
+        if (row) {
+            resendUserMessage(row);
+        }
+    });
+    elMessages.addEventListener("keydown", (e) => {
+        const el = e.target;
+        if (!(el instanceof HTMLTextAreaElement) || !el.classList.contains("agent-msg__input")) {
+            return;
+        }
+        const row = el.closest(".agent-msg--user") as HTMLElement | null;
+        if (!row) {
+            return;
+        }
+        const sendKeyMode = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]).sendKeyMode;
+        handleComposerEnterKey(e, el, sendKeyMode, () => resendUserMessage(row));
     });
 
     root.querySelector("[data-export-session]")?.addEventListener("click", () => {
@@ -1065,7 +1159,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     const cleanup = () => {
         destroyed = true;
-        regenerateAfterAbort = false;
+        afterAbortAction = null;
         clearConfirmNotifications();
         clearConfirmNotifyState();
         bindAssistantConfirmNotify(undefined);

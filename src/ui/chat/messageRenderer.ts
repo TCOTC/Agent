@@ -22,17 +22,16 @@ type Patch = {
 export function buildUserMessageRow(content: string): HTMLElement {
     const row = document.createElement("article");
     row.className = "agent-msg agent-msg--user";
-    row.innerHTML = `<div class="agent-msg__avatar">你</div>
-<div class="agent-msg__bubble">
-  <div class="agent-msg__actions">
-    <button type="button" class="agent-msg__action" data-copy title="复制">复制</button>
-  </div>
-  <pre class="agent-msg__text"></pre>
+    row.innerHTML = `<textarea class="agent-msg__input" rows="2" spellcheck="false"></textarea>
+<div class="agent-msg__footer fn__flex">
+  <button type="button" class="agent-msg__submit" data-user-resend title="发送" aria-label="发送">
+    <svg class="agent-msg__submit-icon" width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
+      <path fill="currentColor" d="M8 3.2 12.8 11H3.2L8 3.2z"/>
+    </svg>
+  </button>
 </div>`;
-    row.querySelector(".agent-msg__text")!.textContent = content;
-    row.querySelector("[data-copy]")?.addEventListener("click", () => {
-        void navigator.clipboard.writeText(content);
-    });
+    const input = row.querySelector(".agent-msg__input") as HTMLTextAreaElement;
+    input.value = content;
     return row;
 }
 
@@ -40,11 +39,8 @@ export function buildToolResultRow(m: ChatMessage): HTMLElement {
     const row = document.createElement("article");
     row.className = "agent-msg agent-msg--tool";
     const preview = (m.content ?? "").slice(0, 3000);
-    row.innerHTML = `<div class="agent-msg__avatar">⚙</div>
-<div class="agent-msg__bubble agent-msg__bubble--tool">
-  <div class="agent-msg__head">工具结果</div>
-  <pre class="agent-msg__text"></pre>
-</div>`;
+    row.innerHTML = `<div class="agent-msg__head">工具结果</div>
+<pre class="agent-msg__text"></pre>`;
     row.querySelector(".agent-msg__text")!.textContent = preview;
     return row;
 }
@@ -52,18 +48,15 @@ export function buildToolResultRow(m: ChatMessage): HTMLElement {
 export function buildAssistantRow(): HTMLElement {
     const row = document.createElement("article");
     row.className = "agent-msg agent-msg--assistant";
-    row.innerHTML = `<div class="agent-msg__avatar">AI</div>
-<div class="agent-msg__bubble">
-  <details class="agent-msg__think" open>
-    <summary>思考</summary>
-    <div class="agent-msg__reasoning b3-typography b3-typography--default"></div>
-  </details>
-  <div class="agent-msg__body b3-typography b3-typography--default"></div>
-  <div class="agent-msg__tools"></div>
-  <div class="agent-msg__confirms" hidden aria-live="polite"></div>
-  <div class="agent-msg__actions">
-    <button type="button" class="agent-msg__action" data-copy-md title="复制 Markdown">复制</button>
-  </div>
+    row.innerHTML = `<details class="agent-msg__think" open>
+  <summary>思考</summary>
+  <div class="agent-msg__reasoning b3-typography b3-typography--default"></div>
+</details>
+<div class="agent-msg__body b3-typography b3-typography--default"></div>
+<div class="agent-msg__tools"></div>
+<div class="agent-msg__confirms" hidden aria-live="polite"></div>
+<div class="agent-msg__actions">
+  <button type="button" class="agent-msg__action" data-copy-md title="复制 Markdown">复制</button>
 </div>`;
     return row;
 }
