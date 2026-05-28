@@ -31,11 +31,6 @@ import {getSendKeyHintHtml, handleComposerEnterKey} from "../../settings/sendKey
 import type {PersistedSettings} from "../../settings/types";
 import {mountTimelinePanel, parseJsonlLines} from "../activity/TimelinePanel";
 import {
-    applySlashCommand,
-    filterSlashCommands,
-    SLASH_COMMANDS,
-} from "../chat/slashCommands";
-import {
     bindAssistantConfirmNotify,
     clearAssistantCache,
     ensureMessageRow,
@@ -51,7 +46,6 @@ import {
     notifyToolConfirmRequired,
     registerConfirmToastHandler,
 } from "../notify/desktopNotify";
-import {renderMentionMenu, searchMentionHits} from "../chat/mentionPicker";
 import {downloadTextFile, sessionToMarkdown} from "../chat/exportSession";
 import {preloadAttachmentPreviews} from "../../context/preload";
 import {
@@ -131,8 +125,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
       </div>
       <div class="agent-composer__card">
         <div class="agent-composer__input-wrap">
-          <textarea class="agent-composer__input" rows="1" data-input placeholder="Plan, @ for context, / for commands"></textarea>
-          <div class="agent-composer__menu fn__none" data-composer-menu></div>
+          <textarea class="agent-composer__input" rows="1" data-input placeholder="说点什么…"></textarea>
         </div>
         <div class="agent-composer__footer">
           <div class="agent-composer__footer-start fn__flex">
@@ -190,7 +183,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const elContextTokenRange = root.querySelector("[data-context-token-range]") as HTMLElement;
     const elContextBarFill = root.querySelector("[data-context-bar-fill]") as HTMLElement;
     const btnContextClose = root.querySelector("[data-context-close]") as HTMLButtonElement;
-    const elComposerMenu = root.querySelector("[data-composer-menu]") as HTMLElement;
     const btnSubmit = root.querySelector("[data-submit]") as HTMLButtonElement;
     const elSubmitIconSend = root.querySelector("[data-submit-icon-send]") as SVGElement;
     const elSubmitIconStop = root.querySelector("[data-submit-icon-stop]") as SVGElement;
@@ -321,7 +313,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         menuId: "agent-composer-mode",
         ariaLabel: "模式",
         onOpen: () => {
-            hideMenus();
             closeContextCard();
         },
         getValue: () => getActive().mode,
@@ -343,7 +334,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         menuId: "agent-composer-model",
         ariaLabel: "模型",
         onOpen: () => {
-            hideMenus();
             closeContextCard();
         },
         getValue: () => getSelectedModel(),
@@ -662,8 +652,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 <h3>Agent 已就绪</h3>
 <p>问答 · 多步工具 · 文档 Diff 编辑</p>
 <ul>
-<li><kbd>/doc</kbd> 读取当前文档</li>
-<li><kbd>@</kbd> 搜索并引用块</li>
 <li><kbd>Shift+Tab</kbd> 切换模式</li>
 <li>${sendHint}</li>
 </ul>
@@ -838,8 +826,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         if (!opts?.text) {
             elInput.value = "";
         }
-        hideMenus();
-
         if (opts?.truncateFrom) {
             truncateFromMessage(opts.truncateFrom);
         }
@@ -920,11 +906,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         void renderMessages();
         void runSend();
     };
-
-    function hideMenus(): void {
-        elComposerMenu.classList.add("fn__none");
-        elComposerMenu.replaceChildren();
-    }
 
     function esc(s: string): string {
         return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -1037,7 +1018,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     btnContextRing.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        hideMenus();
         closeAllComposerDropdowns();
         toggleContextCard();
     });
@@ -1052,68 +1032,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
     };
     root.addEventListener("click", onShellClick);
-
-    elInput.addEventListener("input", () => {
-        const v = elInput.value;
-        const slash = filterSlashCommands(v);
-        if (slash.length) {
-            closeAllComposerDropdowns();
-            elComposerMenu.classList.remove("fn__none");
-            elComposerMenu.innerHTML = slash.map((c) =>
-                `<button type="button" class="agent-menu-item" data-slash="${c.id}"><strong>${c.label}</strong> ${c.hint}</button>`,
-            ).join("");
-            return;
-        }
-        const at = v.match(/@([\w\u4e00-\u9fa5]{1,20})$/);
-        if (at) {
-            void searchMentionHits(kernel, at[1]).then((hits) => {
-                if (filterSlashCommands(elInput.value).length) {
-                    return;
-                }
-                closeAllComposerDropdowns();
-                elComposerMenu.classList.remove("fn__none");
-                elComposerMenu.replaceChildren(renderMentionMenu(hits));
-                elComposerMenu.querySelectorAll("[data-id]").forEach((btn) => {
-                    btn.addEventListener("click", () => {
-                        const id = (btn as HTMLElement).dataset.id!;
-                        const label = btn.querySelector(".agent-mention-menu__label")?.textContent ?? id;
-                        elInput.value = elInput.value.replace(/@[\w\u4e00-\u9fa5]{1,20}$/, `@${label}(${id}) `);
-                        const s = getActive();
-                        s.contextAttachments.push({id, kind: "block", label, addedAt: new Date().toISOString()});
-                        persistSessions();
-                        renderCtxChips();
-                        hideMenus();
-                    });
-                });
-            });
-            return;
-        }
-        hideMenus();
-    });
-
-    elComposerMenu.addEventListener("click", (e) => {
-        const btn = (e.target as HTMLElement).closest("[data-slash]") as HTMLElement | null;
-        if (!btn) {
-            return;
-        }
-        const cmd = SLASH_COMMANDS.find((c) => c.id === btn.dataset.slash);
-        if (!cmd) {
-            return;
-        }
-        if (cmd.id === "clear") {
-            const s = getActive();
-            for (const m of s.messages) {
-                clearAssistantCache(m);
-            }
-            s.messages.length = 0;
-            persistSessions();
-            void renderMessages();
-            elInput.value = "";
-        } else {
-            elInput.value = applySlashCommand(cmd, elInput.value);
-        }
-        hideMenus();
-    });
 
     btnSubmit.addEventListener("click", () => {
         if (abortCtl) {
@@ -1140,7 +1058,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             createNewSession();
         }
         if (ev.key === "Escape") {
-            hideMenus();
             closeAllComposerDropdowns();
             closeContextCard();
         }

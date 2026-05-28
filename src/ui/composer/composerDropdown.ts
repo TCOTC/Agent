@@ -23,7 +23,7 @@ function closeOtherComposerDropdowns(except?: () => void): void {
     }
 }
 
-/** 关闭所有 Composer 下拉菜单（slash / mention 等打开时可调用） */
+/** 关闭所有 Composer 下拉菜单（模式 / 模型等打开时可调用） */
 export function closeAllComposerDropdowns(): void {
     closeOtherComposerDropdowns();
 }

@@ -381,35 +381,3 @@
     margin-right: 6px;
   }
 }
-
-.agent-mention-menu {
-  &__empty {
-    padding: 8px 12px;
-    font-size: 11px;
-    opacity: 0.6;
-  }
-
-  &__item {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    text-align: left;
-    border: none;
-    background: transparent;
-    padding: 8px 12px;
-    cursor: pointer;
-
-    &:hover {
-      background: var(--b3-list-hover);
-    }
-  }
-
-  &__label {
-    font-size: 12px;
-  }
-
-  &__sub {
-    font-size: 10px;
-    opacity: 0.55;
-  }
-}
