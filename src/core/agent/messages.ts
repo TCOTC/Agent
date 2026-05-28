@@ -91,6 +91,8 @@ export function patchChatFromAgent(target: ChatMessage, source: AgentMessage): v
         delete target._toolStatus;
         delete target._toolResults;
         delete target._toolHint;
+        delete target._toolConfirm;
+        delete target._toolDiff;
         delete target._streaming;
         return;
     }
@@ -147,6 +149,16 @@ export function patchChatFromAgent(target: ChatMessage, source: AgentMessage): v
         } else {
             delete target._toolHint;
         }
+        if (source._toolConfirm) {
+            target._toolConfirm = source._toolConfirm;
+        } else {
+            delete target._toolConfirm;
+        }
+        if (source._toolDiff) {
+            target._toolDiff = source._toolDiff;
+        } else {
+            delete target._toolDiff;
+        }
         return;
     }
 
@@ -159,6 +171,8 @@ export function patchChatFromAgent(target: ChatMessage, source: AgentMessage): v
         delete target._toolStatus;
         delete target._toolResults;
         delete target._toolHint;
+        delete target._toolConfirm;
+        delete target._toolDiff;
     }
 }
 

@@ -63,11 +63,47 @@
     flex-shrink: 0;
   }
 
+  // 灰 = 删除，绿 = 新增（避免红绿对比，便于色弱识别）
   &__line--add {
-    background: rgba(46, 160, 67, 0.12);
+    background: #bde6be;
   }
 
   &__line--remove {
-    background: rgba(248, 81, 73, 0.12);
+    background: #d6d6d6;
+  }
+
+  &__omit {
+    margin: 4px 0;
+    border: 1px dashed var(--b3-border-color);
+    border-radius: 6px;
+    background: var(--b3-theme-surface);
+  }
+
+  &__omit-summary {
+    padding: 4px 8px;
+    font-size: 10px;
+    cursor: pointer;
+    user-select: none;
+    opacity: 0.7;
+    list-style: none;
+
+    &::-webkit-details-marker {
+      display: none;
+    }
+  }
+
+  &__omit-body {
+    padding: 0 4px 4px;
+    border-top: 1px solid var(--b3-border-color-trans, rgba(128, 128, 128, 0.12));
+  }
+}
+
+html[data-theme-mode="dark"] .agent-diff {
+  &__line--add {
+    background: #3a5340;
+  }
+
+  &__line--remove {
+    background: #4a4a4a;
   }
 }

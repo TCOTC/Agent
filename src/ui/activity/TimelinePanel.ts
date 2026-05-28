@@ -44,7 +44,7 @@ export function formatTimelineEntry(e: AuditEvent, ts?: string): string {
 export function mountTimelinePanel(container: HTMLElement, lines: string[]): void {
     container.innerHTML = "";
     if (!lines.length) {
-        container.innerHTML = `<div class="agent-timeline__empty">暂无运行记录</div>`;
+        container.innerHTML = "<div class=\"agent-timeline__empty\">暂无运行记录</div>";
         return;
     }
     const pre = document.createElement("pre");

@@ -2,11 +2,22 @@ import type {ChatMessage} from "../../agent/types";
 import type {LuteEngine} from "../../render/lute";
 import {forgetStreamMdCache} from "../../render/streamMdRender";
 import {syncAssistantMessageDom} from "../../render/streamingDom";
+import {renderAssistantConfirmBanner} from "./toolConfirmBanner";
 import {renderAssistantToolCalls} from "./toolCallUi";
 
 const PATCH = "__agentPatch";
 
-type Patch = {content: string; reasoning: string; toolsSig: string; statusSig: string; resultsSig: string; hintSig: string; streamOpen: boolean};
+type Patch = {
+    content: string;
+    reasoning: string;
+    toolsSig: string;
+    statusSig: string;
+    resultsSig: string;
+    hintSig: string;
+    confirmSig: string;
+    diffSig: string;
+    streamOpen: boolean;
+};
 
 export function buildUserMessageRow(content: string): HTMLElement {
     const row = document.createElement("article");
@@ -49,6 +60,7 @@ export function buildAssistantRow(): HTMLElement {
   </details>
   <div class="agent-msg__body b3-typography b3-typography--default"></div>
   <div class="agent-msg__tools"></div>
+  <div class="agent-msg__confirms" hidden aria-live="polite"></div>
   <div class="agent-msg__actions">
     <button type="button" class="agent-msg__action" data-copy-md title="复制 Markdown">复制</button>
   </div>
@@ -62,6 +74,14 @@ function toolResultsSig(m: ChatMessage): string {
 
 function toolHintSig(m: ChatMessage): string {
     return m._toolHint ? JSON.stringify(m._toolHint) : "";
+}
+
+function toolConfirmSig(m: ChatMessage): string {
+    return m._toolConfirm ? JSON.stringify(m._toolConfirm) : "";
+}
+
+function toolDiffSig(m: ChatMessage): string {
+    return m._toolDiff ? JSON.stringify(m._toolDiff) : "";
 }
 
 function toolCallsSig(m: ChatMessage, llmStreaming: boolean): string {
@@ -90,9 +110,84 @@ export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
     if (bodyEl) {
         bodyEl.textContent = m.content ?? "";
     }
+    patchAssistantTooling(row, m);
+}
+
+export interface PatchAssistantToolingOptions {
+    onConfirmNotify?: (message: string, anchorEl: HTMLElement) => void;
+}
+
+let confirmNotifyHandler: PatchAssistantToolingOptions["onConfirmNotify"];
+
+export function bindAssistantConfirmNotify(
+    handler: PatchAssistantToolingOptions["onConfirmNotify"],
+): void {
+    confirmNotifyHandler = handler;
+}
+
+function ensureConfirmsAfterTools(row: HTMLElement): void {
+    const tools = row.querySelector(".agent-msg__tools");
+    const confirms = row.querySelector(".agent-msg__confirms");
+    if (tools && confirms && confirms.previousElementSibling !== tools) {
+        tools.after(confirms);
+    }
+}
+
+/** 刷新消息级确认条与工具卡片 */
+export function patchAssistantTooling(
+    row: HTMLElement,
+    m: ChatMessage,
+    options: PatchAssistantToolingOptions = {},
+): void {
+    ensureConfirmsAfterTools(row);
+    const onNotify = options.onConfirmNotify ?? confirmNotifyHandler;
+    renderAssistantConfirmBanner(row, m, {onNotify});
     renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m, {
         llmStreaming: m._streaming === true,
     });
+}
+
+/** 仅刷新工具卡片（tool call 流式参数阶段，跳过 Markdown 正文渲染） */
+export function patchAssistantToolCallsOnly(row: HTMLElement, m: ChatMessage): void {
+    const toolsSig = toolCallsSig(m, m._streaming === true);
+    const statusSig = m._toolStatus ? JSON.stringify(m._toolStatus) : "";
+    const resultsSig = toolResultsSig(m);
+    const hintSig = toolHintSig(m);
+    const confirmSig = toolConfirmSig(m);
+    const diffSig = toolDiffSig(m);
+    const prev = (row as unknown as Record<string, Patch | undefined>)[PATCH];
+    if (
+        prev &&
+        prev.toolsSig === toolsSig &&
+        prev.statusSig === statusSig &&
+        prev.resultsSig === resultsSig &&
+        prev.hintSig === hintSig &&
+        prev.confirmSig === confirmSig &&
+        prev.diffSig === diffSig
+    ) {
+        return;
+    }
+    if (prev) {
+        prev.toolsSig = toolsSig;
+        prev.statusSig = statusSig;
+        prev.resultsSig = resultsSig;
+        prev.hintSig = hintSig;
+        prev.confirmSig = confirmSig;
+        prev.diffSig = diffSig;
+    } else {
+        (row as unknown as Record<string, Patch>)[PATCH] = {
+            content: m.content ?? "",
+            reasoning: m.reasoning_content ? String(m.reasoning_content) : "",
+            toolsSig,
+            statusSig,
+            resultsSig,
+            hintSig,
+            confirmSig,
+            diffSig,
+            streamOpen: m._mdStreaming === true,
+        };
+    }
+    patchAssistantTooling(row, m);
 }
 
 export async function patchAssistantRow(
@@ -108,6 +203,8 @@ export async function patchAssistantRow(
     const statusSig = m._toolStatus ? JSON.stringify(m._toolStatus) : "";
     const resultsSig = toolResultsSig(m);
     const hintSig = toolHintSig(m);
+    const confirmSig = toolConfirmSig(m);
+    const diffSig = toolDiffSig(m);
     const prev = (row as unknown as Record<string, Patch | undefined>)[PATCH];
     const bodyUnchanged = prev != null && prev.content === contentRaw && prev.reasoning === reasoningRaw;
     if (
@@ -118,6 +215,8 @@ export async function patchAssistantRow(
         prev.statusSig === statusSig &&
         prev.resultsSig === resultsSig &&
         prev.hintSig === hintSig &&
+        prev.confirmSig === confirmSig &&
+        prev.diffSig === diffSig &&
         prev.streamOpen === mdStreaming
     ) {
         return;
@@ -129,6 +228,8 @@ export async function patchAssistantRow(
         statusSig,
         resultsSig,
         hintSig,
+        confirmSig,
+        diffSig,
         streamOpen: mdStreaming,
     };
 
@@ -137,9 +238,7 @@ export async function patchAssistantRow(
         think.hidden = !reasoningRaw;
     }
 
-    renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m, {
-        llmStreaming: m._streaming === true,
-    });
+    patchAssistantTooling(row, m);
 
     const copyBtn = row.querySelector("[data-copy-md]");
     if (copyBtn && !copyBtn.hasAttribute("data-bound")) {

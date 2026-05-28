@@ -7,6 +7,29 @@ export interface RiskAssessment {
     autoApprove: boolean;
 }
 
+function estimateWritePayloadChars(tool: ToolDefinition, args: Record<string, unknown>): number {
+    if (tool.name.startsWith("batch_")) {
+        let n = 0;
+        for (const key of ["updates", "inserts", "appends"] as const) {
+            const arr = args[key];
+            if (!Array.isArray(arr)) {
+                continue;
+            }
+            for (const item of arr) {
+                if (item && typeof item === "object") {
+                    const o = item as Record<string, unknown>;
+                    n += String(o.markdown ?? "").length;
+                }
+            }
+        }
+        if (Array.isArray(args.ids)) {
+            n += args.ids.length * 32;
+        }
+        return n;
+    }
+    return String(args.markdown ?? args.kramdown ?? args.new_markdown ?? args.data ?? "").length;
+}
+
 const RISK_BASE: Record<ToolRisk, number> = {
     read: 8,
     ui: 5,
@@ -24,9 +47,7 @@ export function assessToolRisk(
     let score = RISK_BASE[tool.risk] ?? 40;
 
     if (tool.risk === "write" || tool.risk === "delete") {
-        const len = String(
-            args.markdown ?? args.kramdown ?? args.new_markdown ?? args.data ?? "",
-        ).length;
+        const len = estimateWritePayloadChars(tool, args);
         if (len > 8000) {
             score += 18;
             reasons.push("变更内容较长");
@@ -36,16 +57,20 @@ export function assessToolRisk(
         }
     }
 
-    if (tool.name === "siyuan_edit_document") {
+    if (tool.name === "edit_document") {
         score += 25;
         reasons.push("整篇文档替换");
     }
 
     if (tool.risk === "delete") {
-        reasons.push("删除块操作");
+        reasons.push(tool.name.startsWith("batch_") ? "批量删除块" : "删除块操作");
     }
 
-    if (tool.name === "siyuan_sql_query") {
+    if (tool.name.startsWith("batch_update")) {
+        reasons.push("批量更新块");
+    }
+
+    if (tool.name === "sql_query") {
         const stmt = String(args.stmt ?? "").trim().toUpperCase();
         if (!/^(SELECT|WITH|EXPLAIN|VALUES)\b/.test(stmt)) {
             score = 95;

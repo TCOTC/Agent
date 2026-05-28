@@ -1,5 +1,5 @@
 import type Agent from "../../index";
-import type {AuditEvent, KernelExecutor, ToolDefinition} from "../../agent/types";
+import type {AuditEvent, KernelExecutor, ToolConfirmRequest, ToolDefinition} from "../../agent/types";
 import {getToolDefinitionsForMode} from "./registry";
 import {runTool, type ToolRunContext} from "./executor";
 import type {AgentMode} from "../../agent/modes";
@@ -10,8 +10,8 @@ export interface AgentToolsContext {
     kernel: KernelExecutor;
     mode: AgentMode;
     onAudit: (e: AuditEvent) => void;
-    requestConfirm: (title: string, detail: string) => Promise<boolean>;
-    showDiffPreview?: (html: string, title: string) => Promise<boolean>;
+    requestConfirm: (req: ToolConfirmRequest) => Promise<boolean>;
+    showDiffPreview?: (html: string, title: string, toolCallId: string) => Promise<boolean>;
     worksetNotebookIds: string[];
     riskAutoApproveMax: number;
     /** 工具 UI 提示回调：toolCallId → hint */
@@ -34,6 +34,7 @@ function defToAgentTool(def: ToolDefinition, ctx: AgentToolsContext): AgentTool 
                 worksetNotebookIds: ctx.worksetNotebookIds,
                 riskAutoApproveMax: ctx.riskAutoApproveMax,
                 showDiffPreview: ctx.showDiffPreview,
+                toolCallId,
                 skipRiskGate: true,
                 onToolUiHint: ctx.onToolUiHint
                     ? (hint) => ctx.onToolUiHint!(toolCallId, hint)

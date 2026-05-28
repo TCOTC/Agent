@@ -2,7 +2,7 @@ import type Agent from "../index";
 import {createFetchSyncKernelExecutor} from "./kernelExecutor";
 import type {AgentLlmFailure} from "./deepseekClient";
 import type {AgentMode} from "./modes";
-import type {AuditEvent, ChatMessage, DeepSeekConfig, KernelExecutor} from "./types";
+import type {AuditEvent, ChatMessage, DeepSeekConfig, KernelExecutor, ToolConfirmRequest} from "./types";
 import type {ContextAttachment} from "../context/types";
 import {createAgentSession, type AgentRunOutcome} from "../core/sdk";
 import {syncChatMessagesFromAgent} from "./messageSync";
@@ -26,8 +26,8 @@ export interface RunAgentLoopParams {
     attachments?: ContextAttachment[];
     worksetNotebookIds?: string[];
     riskAutoApproveMax?: number;
-    requestConfirm: (title: string, detail: string) => Promise<boolean>;
-    showDiffPreview?: (html: string, title: string) => Promise<boolean>;
+    requestConfirm: (req: ToolConfirmRequest) => Promise<boolean>;
+    showDiffPreview?: (html: string, title: string, toolCallId: string) => Promise<boolean>;
 }
 
 export type RunAgentLoopOutcome =
@@ -84,6 +84,13 @@ function mapOutcome(outcome: AgentRunOutcome): RunAgentLoopOutcome {
     };
 }
 
+let activeAgentSession: ReturnType<typeof createAgentSession> | null = null;
+
+/** 当前运行中的 Agent 会话（供会话内确认 UI 写回状态） */
+export function getActiveAgentSession(): typeof activeAgentSession {
+    return activeAgentSession;
+}
+
 /**
  * 兼容层：保留 runAgentLoop 入口，内部走 pi 式 SDK + 事件驱动循环。
  */
@@ -117,6 +124,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
             requestConfirm: p.requestConfirm,
             showDiffPreview: p.showDiffPreview,
             onAudit: p.onAudit,
+            onConfirmUiChange: () => {
+                syncMessages();
+                p.onMessagesChanged?.();
+            },
             onAgentEvent: (event) => {
                 agentBus.emit(AgentEvents.AGENT_EVENT, event);
                 syncMessages();
@@ -143,11 +154,16 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
             },
         });
 
-        const outcome = await session.prompt(p.userText, p.signal);
+        activeAgentSession = session;
+        try {
+            const outcome = await session.prompt(p.userText, p.signal);
 
-        syncMessages();
+            syncMessages();
 
-        return mapOutcome(outcome);
+            return mapOutcome(outcome);
+        } finally {
+            activeAgentSession = null;
+        }
     } catch (e) {
         return {kind: "unexpected_error", message: e instanceof Error ? e.message : String(e)};
     }

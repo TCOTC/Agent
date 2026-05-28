@@ -137,6 +137,7 @@ export function createDeepSeekStreamFn(thinkingLevel: ThinkingLevel): StreamFn {
                 reasoning_content: msg.reasoning_content,
                 tool_calls: msg.tool_calls,
                 stopReason: msg.tool_calls?.length ? "tool_calls" : "stop",
+                _llmUsage: completion.result.usage,
             };
 
             if (textStarted) {

@@ -24,9 +24,10 @@ module.exports = (env, argv) => {
                 ],
             }),
         );
+        // 仅输出到 dist/，避免 package.zip 落在 plugins/Agent/ 根目录触发思源反复 reloadPlugin
         plugins.push(
             new ZipPlugin({
-                filename: "package.zip",
+                filename: "dist/package.zip",
                 algorithm: "gzip",
                 include: [/dist/],
                 pathMapper: (assetPath) => {
@@ -49,6 +50,8 @@ module.exports = (env, argv) => {
         },
         externals: {
             siyuan: "siyuan",
+            electron: "commonjs electron",
+            "@electron/remote": "commonjs @electron/remote",
         },
         entry: {
             [production ? "dist/index" : "index"]: "./src/index.ts",

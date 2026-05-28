@@ -16,30 +16,35 @@ export interface ToolDefinition {
 }
 
 export const TOOL_NAMES = [
-    "siyuan_get_block_info",
-    "siyuan_read_markdown",
-    "siyuan_read_kramdown",
-    "siyuan_search_blocks",
-    "siyuan_list_child_blocks",
-    "siyuan_get_doc_outline",
-    "siyuan_get_backlinks",
-    "siyuan_get_block_attributes",
-    "siyuan_get_recent_docs",
-    "siyuan_list_notebooks",
-    "siyuan_list_documents",
-    "siyuan_open_document",
-    "siyuan_focus_block",
-    "siyuan_append_markdown",
-    "siyuan_insert_markdown",
-    "siyuan_update_markdown",
-    "siyuan_edit_block_kramdown",
-    "siyuan_move_block",
-    "siyuan_set_block_attributes",
-    "siyuan_create_document",
-    "siyuan_rename_document",
-    "siyuan_edit_document",
-    "siyuan_delete_block",
-    "siyuan_sql_query",
+    "get_block_info",
+    "read_markdown",
+    "read_kramdown",
+    "search_blocks",
+    "list_child_blocks",
+    "get_doc_outline",
+    "get_backlinks",
+    "get_block_attributes",
+    "get_recent_docs",
+    "list_notebooks",
+    "list_documents",
+    "open_document",
+    "focus_block",
+    "append_markdown",
+    "batch_append_markdown",
+    "insert_markdown",
+    "batch_insert_markdown",
+    "update_markdown",
+    "batch_update_markdown",
+    "edit_block_kramdown",
+    "move_block",
+    "set_block_attributes",
+    "create_document",
+    "rename_document",
+    "delete_document",
+    "edit_document",
+    "delete_block",
+    "batch_delete_blocks",
+    "sql_query",
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -106,6 +111,29 @@ export interface DeepSeekConfig {
 
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 
+export type ToolConfirmState = "pending" | "approved" | "rejected";
+
+export interface ToolConfirmInfo {
+    status: ToolConfirmState;
+    riskSummary: string;
+    detail: string;
+}
+
+export interface ToolDiffPreviewInfo {
+    html: string;
+    title: string;
+    status: ToolConfirmState;
+}
+
+/** 会话内工具风险确认请求 */
+export interface ToolConfirmRequest {
+    toolCallId: string;
+    toolName: string;
+    title: string;
+    riskSummary: string;
+    detail: string;
+}
+
 export interface ChatMessage {
     role: ChatRole;
     content: string | null;
@@ -118,10 +146,16 @@ export interface ChatMessage {
     _toolResults?: Record<string, string>;
     /** UI：长时间等待时的提示（如 diff 确认） */
     _toolHint?: Record<string, string>;
+    /** UI：会话内风险确认 */
+    _toolConfirm?: Record<string, ToolConfirmInfo>;
+    /** UI：会话内文档 diff 预览确认 */
+    _toolDiff?: Record<string, ToolDiffPreviewInfo>;
     /** UI：LLM 仍在流式输出本条 assistant（含 tool call JSON 生成） */
     _streaming?: boolean;
     /** UI：Markdown 通道仍在流式输出（thinking / text delta，不含 tool call JSON） */
     _mdStreaming?: boolean;
+    /** 本轮 LLM 响应的 usage（DeepSeek SSE 末包），用于上下文环统计 */
+    _llmUsage?: Record<string, unknown>;
 }
 
 export type OpenAICompatibleConfig = DeepSeekConfig;

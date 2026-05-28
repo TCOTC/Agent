@@ -54,6 +54,73 @@ export function mergeUsage(a: TokenUsageRecord, b: TokenUsageRecord): TokenUsage
     };
 }
 
+/** DeepSeek 公开规格中的上下文窗口（API 不返回） */
+export const BUILTIN_MODEL_CONTEXT_LIMITS: Readonly<Record<string, number>> = {
+    "deepseek-v4-flash": 1_000_000,
+    "deepseek-v4-pro": 1_000_000,
+};
+
+const FALLBACK_CONTEXT_LIMIT = 64_000;
+
+function normalizeModelId(model: string): string {
+    return model.trim().toLowerCase();
+}
+
+/** 内置表中的上下文上限；未知模型返回 undefined */
+export function getBuiltinModelContextLimit(model: string): number | undefined {
+    const m = normalizeModelId(model);
+    const exact = BUILTIN_MODEL_CONTEXT_LIMITS[m];
+    if (exact !== undefined) {
+        return exact;
+    }
+    if (m.includes("v4-flash")) {
+        return BUILTIN_MODEL_CONTEXT_LIMITS["deepseek-v4-flash"];
+    }
+    if (m.includes("v4-pro")) {
+        return BUILTIN_MODEL_CONTEXT_LIMITS["deepseek-v4-pro"];
+    }
+    return undefined;
+}
+
+/** 设置中针对某模型的覆盖值（大小写不敏感匹配 model id） */
+export function getModelContextLimitOverride(
+    model: string,
+    overrides?: Record<string, number>,
+): number | undefined {
+    return lookupContextOverride(model, overrides);
+}
+
+function lookupContextOverride(
+    model: string,
+    overrides?: Record<string, number>,
+): number | undefined {
+    if (!overrides) {
+        return undefined;
+    }
+    const m = normalizeModelId(model);
+    for (const [id, tokens] of Object.entries(overrides)) {
+        if (id.trim().toLowerCase() === m) {
+            const n = Number(tokens);
+            if (Number.isFinite(n) && n > 0) {
+                return Math.floor(n);
+            }
+        }
+    }
+    return undefined;
+}
+
+/** 模型上下文窗口上限（DeepSeek API 不返回该值） */
+export function getModelContextLimit(
+    model: string,
+    overrides?: Record<string, number>,
+): number {
+    const custom = lookupContextOverride(model, overrides);
+    if (custom !== undefined) {
+        return custom;
+    }
+    return getBuiltinModelContextLimit(model) ?? FALLBACK_CONTEXT_LIMIT;
+}
+
 export function formatTokenBrief(u: TokenUsageRecord): string {
     let s = `输入 ${u.promptTokens} · 输出 ${u.completionTokens}`;
     if (u.reasoningTokens) {

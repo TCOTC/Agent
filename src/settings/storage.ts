@@ -12,6 +12,7 @@ export const defaultSettings: PersistedSettings = {
     defaultMode: "agent",
     worksetNotebookIds: [],
     riskAutoApproveMax: RISK_AUTO_APPROVE_MAX,
+    modelContextLimits: {},
 };
 
 type SettingsKey = keyof typeof defaultSettings;
@@ -35,6 +36,20 @@ function coerceSettingValue(
     return defaultValue;
 }
 
+function coerceModelContextLimits(raw: unknown): Record<string, number> {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        return {};
+    }
+    const out: Record<string, number> = {};
+    for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+        const n = Number(v);
+        if (id.trim() && Number.isFinite(n) && n > 0) {
+            out[id.trim()] = Math.floor(n);
+        }
+    }
+    return out;
+}
+
 export function normalizeSettings(raw: unknown): PersistedSettings {
     const settings = {...defaultSettings} as Record<SettingsKey, PersistedSettings[SettingsKey]>;
     if (!raw || typeof raw !== "object") {
@@ -42,6 +57,10 @@ export function normalizeSettings(raw: unknown): PersistedSettings {
     }
     const o = raw as Record<string, unknown>;
     for (const key of settingsKeys) {
+        if (key === "modelContextLimits") {
+            settings[key] = coerceModelContextLimits(o[key]);
+            continue;
+        }
         settings[key] = coerceSettingValue(o[key], defaultSettings[key]);
     }
     return settings as PersistedSettings;

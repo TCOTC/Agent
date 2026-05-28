@@ -10,6 +10,8 @@ export interface ChatSession {
     updatedAt: string;
     messages: ChatMessage[];
     tokenUsage: TokenUsageRecord;
+    /** 最近一次 API 请求的 prompt_tokens，对应当前上下文体积 */
+    lastContextTokens?: number;
     mode: AgentMode;
     pinned: boolean;
     customInstructions: string;

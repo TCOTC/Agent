@@ -62,23 +62,115 @@ export function diffSummary(lines: DiffLine[]): {adds: number; removes: number; 
     return {adds, removes, sames};
 }
 
+/** 变更行两侧保留的上下文行数 */
+const DIFF_CONTEXT_LINES = 2;
+
+/** 未更改行数达到该值且远离变更时折叠 */
+const DIFF_OMIT_MIN_LINES = 3;
+
+function renderLineHtml(l: DiffLine, extraClass = ""): string {
+    const cls =
+        l.kind === "add" ? "agent-diff__line--add" :
+            l.kind === "remove" ? "agent-diff__line--remove" :
+            "agent-diff__line--same";
+    const prefix = l.kind === "add" ? "+" : l.kind === "remove" ? "-" : " ";
+    const no =
+        l.kind === "add" ? l.newLineNo :
+            l.kind === "remove" ? l.oldLineNo :
+            l.newLineNo;
+    const more = extraClass ? ` ${extraClass}` : "";
+    return `<div class="agent-diff__line ${cls}${more}"><span class="agent-diff__no">${no ?? ""}</span><span class="agent-diff__prefix">${prefix}</span><span class="agent-diff__text">${escapeHtml(l.text)}</span></div>`;
+}
+
+function renderOmittedSameBlock(lines: DiffLine[], start: number, end: number): string {
+    const count = end - start;
+    const inner = lines.slice(start, end).map((l) => renderLineHtml(l)).join("");
+    return `<details class="agent-diff__omit" data-omit-lines="${count}">
+<summary class="agent-diff__omit-summary">已折叠 ${count} 行未更改（点击展开）</summary>
+<div class="agent-diff__omit-body">${inner}</div>
+</details>`;
+}
+
+/** 构建需直接展示的行索引（变更行及其上下文） */
+function buildVisibleLineIndices(lines: DiffLine[]): Set<number> {
+    const visible = new Set<number>();
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i]!.kind === "same") {
+            continue;
+        }
+        for (let d = -DIFF_CONTEXT_LINES; d <= DIFF_CONTEXT_LINES; d++) {
+            const j = i + d;
+            if (j >= 0 && j < lines.length) {
+                visible.add(j);
+            }
+        }
+    }
+    return visible;
+}
+
 export function renderDiffHtml(lines: DiffLine[]): string {
+    if (!lines.length) {
+        return "";
+    }
+
+    const visible = buildVisibleLineIndices(lines);
+    const hasChange = lines.some((l) => l.kind !== "same");
+
+    if (!hasChange) {
+        if (lines.length >= DIFF_OMIT_MIN_LINES) {
+            return renderOmittedSameBlock(lines, 0, lines.length);
+        }
+        return lines.map((l) => renderLineHtml(l)).join("");
+    }
+
     const parts: string[] = [];
-    for (const l of lines) {
-        const cls =
-            l.kind === "add" ? "agent-diff__line--add" :
-                l.kind === "remove" ? "agent-diff__line--remove" :
-                "agent-diff__line--same";
-        const prefix = l.kind === "add" ? "+" : l.kind === "remove" ? "-" : " ";
-        const no =
-            l.kind === "add" ? l.newLineNo :
-                l.kind === "remove" ? l.oldLineNo :
-                l.newLineNo;
-        parts.push(
-            `<div class="agent-diff__line ${cls}"><span class="agent-diff__no">${no ?? ""}</span><span class="agent-diff__prefix">${prefix}</span><span class="agent-diff__text">${escapeHtml(l.text)}</span></div>`,
-        );
+    let markedFirstChange = false;
+    let i = 0;
+    while (i < lines.length) {
+        if (visible.has(i)) {
+            const start = i;
+            while (i < lines.length && visible.has(i)) {
+                i++;
+            }
+            for (let j = start; j < i; j++) {
+                const l = lines[j]!;
+                let extra = "";
+                if (!markedFirstChange && l.kind !== "same") {
+                    markedFirstChange = true;
+                    extra = "agent-diff__line--first-change";
+                }
+                parts.push(renderLineHtml(l, extra));
+            }
+            continue;
+        }
+
+        const omitStart = i;
+        while (i < lines.length && !visible.has(i)) {
+            i++;
+        }
+        const omitCount = i - omitStart;
+        if (omitCount >= DIFF_OMIT_MIN_LINES) {
+            parts.push(renderOmittedSameBlock(lines, omitStart, i));
+        } else {
+            for (let j = omitStart; j < i; j++) {
+                parts.push(renderLineHtml(lines[j]!));
+            }
+        }
     }
     return parts.join("");
+}
+
+/** 将 diff 滚动容器定位到首个变更行（视口偏上约 1/4 处） */
+export function scrollDiffToFirstChange(scrollEl: HTMLElement): void {
+    const anchor = scrollEl.querySelector(".agent-diff__line--first-change") as HTMLElement | null
+        ?? scrollEl.querySelector(".agent-diff__line--add, .agent-diff__line--remove") as HTMLElement | null;
+    if (!anchor) {
+        return;
+    }
+    const padding = Math.min(80, Math.max(24, scrollEl.clientHeight * 0.22));
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const anchorRect = anchor.getBoundingClientRect();
+    scrollEl.scrollTop = Math.max(0, anchorRect.top - scrollRect.top + scrollEl.scrollTop - padding);
 }
 
 function escapeHtml(s: string): string {

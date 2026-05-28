@@ -36,7 +36,7 @@ export function renderMentionMenu(hits: MentionHit[]): HTMLElement {
     const menu = document.createElement("div");
     menu.className = "agent-mention-menu";
     if (!hits.length) {
-        menu.innerHTML = `<div class="agent-mention-menu__empty">无匹配块</div>`;
+        menu.innerHTML = "<div class=\"agent-mention-menu__empty\">无匹配块</div>";
         return menu;
     }
     for (const h of hits) {

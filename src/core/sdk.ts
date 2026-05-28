@@ -10,7 +10,7 @@ import type {AgentEvent, AgentMessage, AssistantAgentMessage, ThinkingLevel} fro
 import {createSiyuanAgentTools, type AgentToolsContext} from "../tools/agentTools";
 import {getToolByName, getToolDefinitionsForMode} from "../tools/registry";
 import {assessToolRisk, formatRiskSummary} from "../tools/riskPolicy";
-import type {ChatMessage} from "../agent/types";
+import type {ToolConfirmInfo, ToolConfirmRequest} from "../agent/types";
 
 export interface CreateAgentSessionOptions {
     plugin: Agent;
@@ -24,11 +24,13 @@ export interface CreateAgentSessionOptions {
     attachments?: ContextAttachment[];
     worksetNotebookIds?: string[];
     riskAutoApproveMax?: number;
-    requestConfirm: (title: string, detail: string) => Promise<boolean>;
-    showDiffPreview?: (html: string, title: string) => Promise<boolean>;
+    requestConfirm: (req: ToolConfirmRequest) => Promise<boolean>;
+    showDiffPreview?: (html: string, title: string, toolCallId: string) => Promise<boolean>;
     onAudit: (e: AuditEvent) => void;
     onAgentEvent?: (event: AgentEvent) => void;
     onToolUiHint?: (toolCallId: string, hint: string) => void;
+    /** 会话内确认 / diff UI 需要刷新 */
+    onConfirmUiChange?: () => void;
 }
 
 export interface AgentSession {
@@ -83,6 +85,9 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
         streamFn: createDeepSeekStreamFn(thinkingLevel),
         convertToLlm,
         beforeToolCall: async (ctx, signal) => {
+            if (signal?.aborted) {
+                return {block: true, reason: "操作已取消"};
+            }
             const def = getToolByName(ctx.toolCall.name);
             if (!def) {
                 return {block: true, reason: `未知工具：${ctx.toolCall.name}`};
@@ -91,22 +96,53 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
             if (risk.autoApprove) {
                 return undefined;
             }
+            const detail = JSON.stringify(ctx.args, null, 2).slice(0, 800);
+            const riskSummary = formatRiskSummary(risk);
+            const confirmInfo: ToolConfirmInfo = {
+                status: "pending",
+                riskSummary,
+                detail,
+            };
+            const asst = findLatestAssistant(agent.state.messages);
+            if (asst) {
+                asst._toolConfirm = {
+                    ...(asst._toolConfirm ?? {}),
+                    [ctx.toolCall.id]: confirmInfo,
+                };
+            }
+            options.onConfirmUiChange?.();
             options.onAudit({
                 kind: "tool_confirm_required",
                 name: ctx.toolCall.name,
                 detail: JSON.stringify(ctx.args).slice(0, 400),
                 riskScore: risk.score,
             });
-            const approved = await options.requestConfirm(
-                `Agent · ${ctx.toolCall.name}`,
-                `${formatRiskSummary(risk)}\n\n${JSON.stringify(ctx.args, null, 2).slice(0, 800)}`,
-            );
+            const approved = await options.requestConfirm({
+                toolCallId: ctx.toolCall.id,
+                toolName: ctx.toolCall.name,
+                title: `Agent · ${ctx.toolCall.name}`,
+                riskSummary,
+                detail,
+            });
+            if (asst?._toolConfirm?.[ctx.toolCall.id]) {
+                if (approved) {
+                    const next = {...asst._toolConfirm};
+                    delete next[ctx.toolCall.id];
+                    asst._toolConfirm = Object.keys(next).length ? next : undefined;
+                } else {
+                    asst._toolConfirm[ctx.toolCall.id] = {...confirmInfo, status: "rejected"};
+                }
+            }
+            options.onConfirmUiChange?.();
             options.onAudit({kind: "tool_confirm_result", name: ctx.toolCall.name, approved});
             if (signal?.aborted) {
                 return {block: true, reason: "操作已取消"};
             }
             if (!approved) {
-                return {block: true, reason: "用户拒绝执行"};
+                return {
+                    block: true,
+                    reason: signal?.aborted ? "操作已取消" : "用户拒绝执行",
+                };
             }
             return undefined;
         },
@@ -156,10 +192,19 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
                     delete asst._toolHint[event.toolCallId];
                 }
             }
-        } else if (event.type === "message_update" || event.type === "message_end") {
-            if (event.message.role === "assistant") {
-                syncStreamingAssistant(event.message);
+        } else if (event.type === "message_end" && event.message.role === "assistant") {
+            const asst = event.message;
+            syncStreamingAssistant(asst);
+            if (asst._llmUsage) {
+                options.onAudit({
+                    kind: "llm_response",
+                    durationMs: 0,
+                    finishReason: asst.stopReason,
+                    usage: asst._llmUsage,
+                });
             }
+        } else if (event.type === "message_update" && event.message.role === "assistant") {
+            syncStreamingAssistant(event.message);
         }
     }
 
@@ -246,6 +291,7 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
                     kind: "llm_response",
                     durationMs: Math.round(performance.now() - tReq),
                     finishReason: lastAsst?.tool_calls?.length ? "tool_calls" : "stop",
+                    usage: lastAsst?._llmUsage,
                 });
 
                 return {kind: "completed"};

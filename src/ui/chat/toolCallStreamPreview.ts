@@ -13,26 +13,58 @@ export interface ToolCallStreamPreview {
 }
 
 const FIELD_LABELS: Partial<Record<ToolName, Record<string, string>>> = {
-    siyuan_create_document: {
+create_document: {
         notebook_id: "笔记本 ID",
         path: "文档路径",
         markdown: "正文 Markdown",
     },
-    siyuan_edit_document: {
+edit_document: {
         doc_id: "文档 ID",
         new_markdown: "新正文",
     },
-    siyuan_read_markdown: {
+read_markdown: {
         id: "块 / 文档 ID",
         start_line: "起始行",
         end_line: "结束行",
     },
-    siyuan_open_document: {
+open_document: {
         id: "块 / 文档 ID",
         highlight: "高亮",
     },
-    siyuan_delete_block: {id: "块 ID"},
-    siyuan_sql_query: {stmt: "SQL"},
+delete_block: {id: "块 ID"},
+delete_document: {id: "文档根块 ID"},
+rename_document: {id: "文档根块 ID", title: "新标题"},
+sql_query: {stmt: "SQL"},
+append_markdown: {
+        parent_id: "父块 ID",
+        markdown: "Markdown",
+    },
+insert_markdown: {
+        markdown: "Markdown",
+        parent_id: "父块 ID",
+        previous_id: "上一块 ID",
+        next_id: "下一块 ID",
+    },
+update_markdown: {
+        id: "块 ID",
+        markdown: "Markdown",
+    },
+edit_block_kramdown: {
+        id: "块 ID",
+        kramdown: "Kramdown",
+    },
+batch_update_markdown: {
+        updates: "批量更新",
+    },
+batch_insert_markdown: {
+        inserts: "批量插入",
+    },
+batch_append_markdown: {
+        appends: "批量追加",
+    },
+batch_delete_blocks: {
+        ids: "块 ID 列表",
+    },
 };
 
 /** 从不完整 JSON 中提取字符串字段（支持流式未闭合引号） */
@@ -115,7 +147,8 @@ function extractPartialScalar(src: string, key: string): {value: string; closed:
 export function buildToolCallStreamPreview(toolName: string, argsJson: string): ToolCallStreamPreview {
     const raw = argsJson?.trim() ?? "";
     let parseComplete = false;
-    if (raw) {
+    // 大参数流式阶段避免每帧 JSON.parse 整段字符串
+    if (raw && (raw.endsWith("}") || raw.length < 256)) {
         try {
             JSON.parse(raw);
             parseComplete = true;

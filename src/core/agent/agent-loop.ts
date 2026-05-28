@@ -83,6 +83,11 @@ async function runLoop(
         let hasMoreToolCalls = true;
 
         while (hasMoreToolCalls || pendingMessages.length > 0) {
+            if (signal?.aborted) {
+                await emit({type: "agent_end", messages: newMessages});
+                return;
+            }
+
             if (!firstTurn) {
                 await emit({type: "turn_start"});
             } else {
@@ -126,6 +131,12 @@ async function runLoop(
                 for (const result of toolResults) {
                     currentContext.messages.push(result);
                     newMessages.push(result);
+                }
+
+                if (signal?.aborted) {
+                    await emit({type: "turn_end", message, toolResults});
+                    await emit({type: "agent_end", messages: newMessages});
+                    return;
                 }
             }
 
@@ -286,7 +297,7 @@ async function executeSequential(
         }
     }
 
-    return {messages, terminate: shouldTerminate(finalized)};
+    return {messages, terminate: batchShouldTerminate(finalized, signal)};
 }
 
 async function executeParallel(
@@ -350,7 +361,7 @@ async function executeParallel(
         messages.push(msg);
     }
 
-    return {messages, terminate: shouldTerminate(finalized)};
+    return {messages, terminate: batchShouldTerminate(finalized, signal)};
 }
 
 type PreparedToolCall = {
@@ -398,7 +409,7 @@ async function prepareToolCall(
                     kind: "immediate",
                     outcome: {
                         toolCall,
-                        result: errorResult("操作已取消"),
+                        result: errorResult("操作已取消", {terminate: true}),
                         isError: true,
                     },
                 };
@@ -408,7 +419,9 @@ async function prepareToolCall(
                     kind: "immediate",
                     outcome: {
                         toolCall,
-                        result: errorResult(before.reason ?? "工具执行被阻止"),
+                        result: errorResult(before.reason ?? "工具执行被阻止", {
+                            terminate: signal?.aborted === true,
+                        }),
                         isError: true,
                     },
                 };
@@ -527,14 +540,28 @@ async function finalizeExecuted(
     return {toolCall: prepared.toolCall, result, isError};
 }
 
-function errorResult(message: string): AgentToolResult {
-    return {content: [{type: "text", text: message}], details: {}};
+function errorResult(message: string, opts?: {terminate?: boolean}): AgentToolResult {
+    return {
+        content: [{type: "text", text: message}],
+        details: {},
+        ...(opts?.terminate ? {terminate: true} : {}),
+    };
 }
 
 function shouldTerminate(
     finalized: Array<{result: AgentToolResult}>,
 ): boolean {
     return finalized.length > 0 && finalized.every((f) => f.result.terminate === true);
+}
+
+function batchShouldTerminate(
+    finalized: Array<{result: AgentToolResult}>,
+    signal: AbortSignal | undefined,
+): boolean {
+    if (signal?.aborted) {
+        return true;
+    }
+    return shouldTerminate(finalized);
 }
 
 async function emitToolExecutionEnd(

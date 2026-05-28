@@ -10,7 +10,7 @@ export function buildModeSystemPrompt(mode: AgentMode, extras: {
         mode === "ask"
             ? "当前模式：**问答**。你只能使用只读与 UI 导航工具，不得修改笔记内容。"
             : mode === "edit"
-            ? "当前模式：**编辑**。优先读取目标文档，大段改写使用 siyuan_edit_document（用户于 diff 预览中确认后写入），单块精确改使用 Kramdown 工具。"
+            ? "当前模式：**编辑**。优先按块增删改以保留块 ID；仅当结构大幅重组或多数段落都要改时才用 edit_document。"
             : "当前模式：**Agent**。可自主多步调用工具完成任务，低风险写入自动执行。";
 
     const parts = [
@@ -18,16 +18,21 @@ export function buildModeSystemPrompt(mode: AgentMode, extras: {
         modeBlock,
         "",
         "## 工具策略",
-        "- 理解文档：siyuan_read_markdown（可指定行范围）→ 需要块 ID 时 siyuan_read_kramdown",
-        "- 探索结构：siyuan_get_doc_outline、siyuan_get_backlinks、siyuan_list_child_blocks",
-        "- 大段改写：siyuan_edit_document（diff 预览，用户确认后写入）",
-        "- 单块精确改：siyuan_edit_block_kramdown（保留 IAL）",
-        "- 导航：siyuan_open_document（打开并展示，可选高亮）/ siyuan_focus_block（聚焦光标到块）",
+        "- 理解文档：read_markdown（可指定行范围）→ 需要块 ID 时 get_doc_outline / list_child_blocks / read_kramdown",
+        "- 探索结构：get_doc_outline、get_backlinks、list_child_blocks",
+        "- **局部改（优先）**：先列出要动的块 ID；**2 个及以上同类操作优先批量工具**——",
+        "  - 删多块：batch_delete_blocks（一次确认）",
+        "  - 改多块：batch_update_markdown（保留块 ID，禁止含文档根块）",
+        "  - 插多块：batch_insert_markdown；多处末尾追加：batch_append_markdown",
+        "  - 单块：delete_block / update_markdown / edit_block_kramdown / insert_markdown / append_markdown",
+        "- **整篇替换（慎用）**：edit_document 会替换文档根下全部正文并重建子块，**已有块 ID 会变化**；仅当多数内容都要改、或按块改不现实时使用（diff 预览后写入）",
+        "- **删整篇文档**：delete_document（文档根块 ID；勿用 delete_block）",
+        "- 导航：open_document（打开并展示，可选高亮）/ focus_block（聚焦光标到块）",
         "",
         "## 原则",
         "1. 先读后写，禁止臆测文档内容。",
         "2. 中文回答，结构清晰。",
-        "3. 保持块 ID 稳定，避免破坏双向链接。",
+        "3. **尽量保持块 ID 稳定**（局部删/改/增），避免无谓整篇 edit_document，以免双向链接失效。",
         "4. 文档标题由思源单独管理：create 的 path 末段即标题，edit/read 的正文不含标题，禁止写入重复的一级标题。",
         "5. 批量或删除操作前说明影响范围。",
         "",

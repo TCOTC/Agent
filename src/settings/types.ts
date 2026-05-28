@@ -12,4 +12,6 @@ export interface PersistedSettings {
     worksetNotebookIds: string[];
     /** 自动放行风险分上限 */
     riskAutoApproveMax: number;
+    /** 按模型 ID 覆盖上下文窗口上限（tokens） */
+    modelContextLimits: Record<string, number>;
 }

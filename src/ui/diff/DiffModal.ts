@@ -1,3 +1,4 @@
+import {scrollDiffToFirstChange} from "../../editor/diffEngine";
 import {confirmPromise} from "../../util";
 
 /** 非阻塞 Diff 预览弹窗；返回用户是否继续 */
@@ -12,7 +13,7 @@ export function showDiffPreviewModal(html: string, title: string): Promise<boole
   </header>
   <div class="agent-diff-modal__body agent-diff">${html}</div>
   <footer class="agent-diff-modal__foot fn__flex">
-    <span class="fn__flex-1 b3-label__text">绿色为新增，红色为删除</span>
+    <span class="fn__flex-1 b3-label__text">灰 = 删除，绿 = 新增；未改行默认折叠</span>
     <button type="button" class="b3-button b3-button--cancel" data-reject>拒绝</button>
     <button type="button" class="b3-button b3-button--text" data-accept>应用</button>
   </footer>
@@ -30,6 +31,12 @@ export function showDiffPreviewModal(html: string, title: string): Promise<boole
             }
         });
         document.body.appendChild(overlay);
+        const bodyEl = overlay.querySelector(".agent-diff-modal__body") as HTMLElement | null;
+        if (bodyEl) {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => scrollDiffToFirstChange(bodyEl));
+            });
+        }
     });
 }
 
