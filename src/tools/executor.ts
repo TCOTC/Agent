@@ -17,7 +17,7 @@ import {
 import {getToolByName} from "./registry";
 import {assessToolRisk, formatRiskSummary} from "./riskPolicy";
 import {docTitleFromPath, EXPORT_MD_BODY_OPTS, sliceMarkdownByLines, stripLeadingDocumentTitle} from "./markdown";
-import {truncateToolOutput, wrapToolJson} from "./truncate";
+import {compactKernelResponseTruncated, truncateToolOutput, wrapToolJson} from "./truncate";
 import {validateKramdownPayload, verifyBlockExists} from "./kramdownValidate";
 import {checkWorkset, resolveNotebookId, worksetError} from "./worksetGate";
 import {isToolName} from "../agent/types";
@@ -143,7 +143,7 @@ export async function runTool(
         if (toolName === "get_block_info") {
             const id = String(args.id ?? "");
             const r = await ctx.kernel.post("/api/block/getBlockInfo", {id});
-            return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "read_markdown") {
@@ -203,7 +203,7 @@ export async function runTool(
                 pageSize: typeof args.pageSize === "number" ? args.pageSize : 16,
                 method: typeof args.method === "number" ? args.method : 0,
             });
-            return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "list_child_blocks") {
@@ -224,7 +224,7 @@ export async function runTool(
         if (toolName === "get_doc_outline") {
             const id = String(args.id ?? "");
             const r = await ctx.kernel.post("/api/outline/getDocOutline", {id, preview: false});
-            return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "get_backlinks") {
@@ -235,12 +235,12 @@ export async function runTool(
                 mk: "",
                 containChildren: args.contain_children === true,
             });
-            return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "get_block_attributes") {
             const r = await ctx.kernel.post("/api/attr/getBlockAttrs", {id: String(args.id ?? "")});
-            return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "get_recent_docs") {
@@ -249,12 +249,12 @@ export async function runTool(
                 stmt: `SELECT b.id, b.content, b.hpath, b.updated FROM blocks b WHERE b.type='d' ORDER BY b.updated DESC LIMIT ${limit}`,
                 mode: "readonly",
             });
-            return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "list_notebooks") {
             const r = await ctx.kernel.post("/api/notebook/lsNotebooks", {});
-            return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "list_documents") {
@@ -268,7 +268,7 @@ export async function runTool(
                 page: typeof args.page === "number" ? args.page : 1,
                 pageSize: typeof args.page_size === "number" ? args.page_size : 32,
             });
-            return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "open_document") {
@@ -412,7 +412,7 @@ export async function runTool(
                 id,
                 title: String(args.title ?? ""),
             });
-            return {text: JSON.stringify(r), ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "delete_document") {
@@ -451,7 +451,7 @@ export async function runTool(
                 return {text: JSON.stringify({error: "user_cancelled"}), ok: false};
             }
             const r = await ctx.kernel.post("/api/attr/setBlockAttrs", {id, attrs});
-            return {text: JSON.stringify(r), ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "append_markdown") {
@@ -469,7 +469,12 @@ export async function runTool(
                 dataType: "markdown",
                 data: String(args.markdown ?? ""),
             });
-            return {text: JSON.stringify(r), ok: r.code === 0, riskScore: gate.riskScore, autoApproved: gate.autoApproved};
+            return {
+                text: compactKernelResponseTruncated(r),
+                ok: r.code === 0,
+                riskScore: gate.riskScore,
+                autoApproved: gate.autoApproved,
+            };
         }
 
         if (toolName === "insert_markdown") {
@@ -494,7 +499,7 @@ export async function runTool(
                 return {text: JSON.stringify({error: "user_cancelled"}), ok: false};
             }
             const r = await ctx.kernel.post("/api/block/insertBlock", body);
-            return {text: JSON.stringify(r), ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "update_markdown") {
@@ -512,7 +517,7 @@ export async function runTool(
                 dataType: "markdown",
                 data: String(args.markdown ?? ""),
             });
-            return {text: JSON.stringify(r), ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "edit_block_kramdown") {
@@ -720,7 +725,7 @@ export async function runTool(
                 return {text: JSON.stringify({error: "user_cancelled"}), ok: false};
             }
             const r = await ctx.kernel.post("/api/block/moveBlock", body);
-            return {text: JSON.stringify(r), ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
 
         if (toolName === "sql_query") {
@@ -733,7 +738,7 @@ export async function runTool(
                 return {text: JSON.stringify({error: "user_cancelled"}), ok: false};
             }
             const r = await ctx.kernel.post("/api/query/sql", {stmt, mode: "readonly"});
-            return {text: truncateToolOutput(JSON.stringify(r)).text, ok: r.code === 0};
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }
     } catch (e) {
         const err = e instanceof Error ? e.message : String(e);

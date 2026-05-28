@@ -360,7 +360,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             btn.dataset.id = s.id;
             const titleHtml = highlightFilter(esc(s.title), sessionFilter);
             btn.innerHTML = `<span class="agent-rail__item-title fn__ellipsis">${s.pinned ? "📌 " : ""}${titleHtml}</span>
-<span class="agent-rail__item-meta">${AGENT_MODES.find((m) => m.id === s.mode)?.label ?? "Agent"}</span>`;
+<span class="agent-rail__item-meta">${AGENT_MODES.find((m) => m.id === s.mode)?.label ?? "智能体"}</span>`;
             btn.addEventListener("click", () => {
                 sessions.activeId = s.id;
                 persistSessions();

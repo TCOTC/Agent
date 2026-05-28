@@ -1,7 +1,7 @@
 import type {ChatMessage} from "../../agent/types";
 import type {LuteEngine} from "../../render/lute";
 import {forgetStreamMdCache} from "../../render/streamMdRender";
-import {syncAssistantMessageDom} from "../../render/streamingDom";
+import {syncAssistantContentDom, syncAssistantReasoningDom} from "../../render/streamingDom";
 import {renderAssistantConfirmBanner} from "./toolConfirmBanner";
 import {renderAssistantToolCalls} from "./toolCallUi";
 
@@ -249,8 +249,17 @@ export async function patchAssistantRow(
     }
 
     const needStreamFinalize = prev != null && prev.streamOpen && !mdStreaming;
-    if (!bodyUnchanged || needStreamFinalize) {
-        await syncAssistantMessageDom(row, m, lute, mdStreaming, destroyed);
+    const reasoningChanged = !prev || prev.reasoning !== reasoningRaw;
+    const contentChanged = !prev || prev.content !== contentRaw;
+
+    if (reasoningChanged || (needStreamFinalize && !!reasoningRaw)) {
+        await syncAssistantReasoningDom(row, m, lute, mdStreaming, destroyed);
+        if (destroyed()) {
+            return;
+        }
+    }
+    if (contentChanged || needStreamFinalize) {
+        await syncAssistantContentDom(row, m, lute, mdStreaming, destroyed);
     }
 }
 

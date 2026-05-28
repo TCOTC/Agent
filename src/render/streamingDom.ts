@@ -94,10 +94,35 @@ function syncTailDirectChildren(
     if (prev && prev.tailHtml === tailHtml && prev.sealedN === sealedN) {
         return;
     }
+    const {fragment, blocks} = htmlToTopLevelElements(tailHtml);
+
+    if (dom.tailBlocks.length > 0 && blocks.length > 0) {
+        let prefixMatch = 0;
+        const limit = Math.min(dom.tailBlocks.length, blocks.length);
+        for (let i = 0; i < limit; i++) {
+            if (dom.tailBlocks[i]!.outerHTML === blocks[i]!.outerHTML) {
+                prefixMatch = i + 1;
+            } else {
+                break;
+            }
+        }
+        const changeFrom =
+            prefixMatch >= dom.tailBlocks.length ? dom.tailBlocks.length : prefixMatch;
+        for (let i = dom.tailBlocks.length - 1; i >= changeFrom; i--) {
+            dom.tailBlocks[i]!.remove();
+            dom.tailBlocks.pop();
+        }
+        for (let i = changeFrom; i < blocks.length; i++) {
+            blocksRoot.append(blocks[i]!);
+            dom.tailBlocks.push(blocks[i]!);
+        }
+        tailSyncStateByBlocksRoot.set(blocksRoot, {tailHtml, sealedN});
+        return;
+    }
+
     for (const el of dom.tailBlocks) {
         el.remove();
     }
-    const {fragment, blocks} = htmlToTopLevelElements(tailHtml);
     dom.tailBlocks = blocks;
     if (blocks.length > 0) {
         blocksRoot.append(fragment);
@@ -220,20 +245,22 @@ export async function syncStreamingMdHost(
     await chain;
 }
 
-export async function syncAssistantMessageDom(
+function reasoningStreamOpen(m: ChatMessage, mdStreaming: boolean): boolean {
+    return mdStreaming && m._thinkingMdOpen === true;
+}
+
+/** 仅同步推理区 Markdown（避免正文流式时连带重写 reasoning DOM） */
+export async function syncAssistantReasoningDom(
     row: HTMLElement,
     m: ChatMessage,
     lute: LuteEngine,
-    streamOpen: boolean,
+    mdStreaming: boolean,
     destroyed: () => boolean,
 ): Promise<void> {
     const reasoningRaw =
         m.reasoning_content != null && m.reasoning_content !== "" ? String(m.reasoning_content) : "";
-    const contentRaw = m.content ?? "";
-
     const reasoningHost = row.querySelector(".agent-msg__reasoning") as HTMLElement | null;
-    const bodyEl = row.querySelector(".agent-msg__body") as HTMLElement | null;
-    if (!reasoningHost || !bodyEl) {
+    if (!reasoningHost) {
         return;
     }
 
@@ -241,20 +268,45 @@ export async function syncAssistantMessageDom(
         reasoningHost.replaceChildren();
         reasoningHost.hidden = true;
         clearStreamingDomHost(reasoningHost);
-    } else {
-        reasoningHost.hidden = false;
-        reasoningHost.className =
-            "agent-msg__reasoning b3-typography b3-typography--default";
-        // thinking 结束或正文已开始：一次性封存推理区，避免 tool call 阶段反复 md2html
-        if (!streamOpen || contentRaw.length > 0) {
-            await finalizeStreamingMdRemainder(m, reasoningRaw, lute, "reasoning");
-            if (destroyed()) {
-                return;
-            }
-        }
-        await syncStreamingMdHost(reasoningHost, m, reasoningRaw, lute, "reasoning", streamOpen, destroyed);
+        return;
     }
 
-    bodyEl.className = "agent-msg__body b3-typography b3-typography--default";
-    await syncStreamingMdHost(bodyEl, m, contentRaw, lute, "content", streamOpen, destroyed);
+    reasoningHost.hidden = false;
+    const streamOpen = reasoningStreamOpen(m, mdStreaming);
+    if (!streamOpen) {
+        await finalizeStreamingMdRemainder(m, reasoningRaw, lute, "reasoning");
+        if (destroyed()) {
+            return;
+        }
+    }
+    await syncStreamingMdHost(reasoningHost, m, reasoningRaw, lute, "reasoning", streamOpen, destroyed);
+}
+
+/** 仅同步正文 Markdown */
+export async function syncAssistantContentDom(
+    row: HTMLElement,
+    m: ChatMessage,
+    lute: LuteEngine,
+    mdStreaming: boolean,
+    destroyed: () => boolean,
+): Promise<void> {
+    const bodyEl = row.querySelector(".agent-msg__body") as HTMLElement | null;
+    if (!bodyEl) {
+        return;
+    }
+    await syncStreamingMdHost(bodyEl, m, m.content ?? "", lute, "content", mdStreaming, destroyed);
+}
+
+export async function syncAssistantMessageDom(
+    row: HTMLElement,
+    m: ChatMessage,
+    lute: LuteEngine,
+    streamOpen: boolean,
+    destroyed: () => boolean,
+): Promise<void> {
+    await syncAssistantReasoningDom(row, m, lute, streamOpen, destroyed);
+    if (destroyed()) {
+        return;
+    }
+    await syncAssistantContentDom(row, m, lute, streamOpen, destroyed);
 }

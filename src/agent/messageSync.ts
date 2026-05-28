@@ -47,6 +47,7 @@ export function syncChatMessagesFromAgent(
         if (m.role === "assistant") {
             delete m._streaming;
             delete m._mdStreaming;
+            delete m._thinkingMdOpen;
         }
     }
 

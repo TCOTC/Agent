@@ -1,5 +1,5 @@
 /** Agent 运行模式 */
-export type AgentMode = "ask" | "agent" | "edit";
+export type AgentMode = "ask" | "agent";
 
 export interface AgentModeMeta {
     id: AgentMode;
@@ -21,17 +21,10 @@ export const AGENT_MODES: AgentModeMeta[] = [
     },
     {
         id: "agent",
-        label: "Agent",
+        label: "智能体",
         description: "完整工具链，自动执行低风险写入",
         enableTools: true,
         allowedRisks: ["read", "ui", "write", "delete", "sql"],
-    },
-    {
-        id: "edit",
-        label: "编辑",
-        description: "专注文档改写与结构变更",
-        enableTools: true,
-        allowedRisks: ["read", "ui", "write", "delete"],
     },
 ];
 

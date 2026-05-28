@@ -46,9 +46,19 @@ function applyMdStreamingFlag(
     if (!row || row.role !== "assistant") {
         return;
     }
+    if (sub === "thinking_start") {
+        row._mdStreaming = true;
+        row._thinkingMdOpen = true;
+        return;
+    }
+    if (sub === "thinking_delta") {
+        row._mdStreaming = true;
+        return;
+    }
+    if (sub === "thinking_end") {
+        row._thinkingMdOpen = false;
+    }
     if (
-        sub === "thinking_start" ||
-        sub === "thinking_delta" ||
         sub === "text_start" ||
         sub === "text_delta"
     ) {

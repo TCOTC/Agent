@@ -22,6 +22,35 @@ export function truncateToolOutput(text: string, max = MAX_TOOL_OUTPUT_CHARS): T
     };
 }
 
+export function isEmptyKernelMsg(msg: unknown): boolean {
+    return msg == null || (typeof msg === "string" && msg.trim() === "");
+}
+
+function formatKernelData(data: unknown): string {
+    if (data === undefined) {
+        return "";
+    }
+    if (typeof data === "string") {
+        return data;
+    }
+    return JSON.stringify(data, null, 2);
+}
+
+/** 成功且无 msg 时只序列化 data，否则保留完整响应 */
+export function compactKernelResponseText(value: unknown): string {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+        const r = value as Record<string, unknown>;
+        if (r.code === 0 && isEmptyKernelMsg(r.msg) && "data" in r) {
+            return formatKernelData(r.data);
+        }
+    }
+    return JSON.stringify(value, null, 2);
+}
+
+export function compactKernelResponseTruncated(value: unknown, max = MAX_TOOL_OUTPUT_CHARS): string {
+    return truncateToolOutput(compactKernelResponseText(value), max).text;
+}
+
 export function wrapToolJson(payload: Record<string, unknown>, rawText?: string): string {
     if (rawText !== undefined) {
         const {text, truncated, originalLength} = truncateToolOutput(rawText);

@@ -154,6 +154,8 @@ export interface ChatMessage {
     _streaming?: boolean;
     /** UI：Markdown 通道仍在流式输出（thinking / text delta，不含 tool call JSON） */
     _mdStreaming?: boolean;
+    /** UI：推理 Markdown 仍在流式输出（thinking_end 后为 false，与正文 _mdStreaming 解耦） */
+    _thinkingMdOpen?: boolean;
     /** 本轮 LLM 响应的 usage（DeepSeek SSE 末包），用于上下文环统计 */
     _llmUsage?: Record<string, unknown>;
 }

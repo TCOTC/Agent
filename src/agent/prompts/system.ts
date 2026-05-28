@@ -1,3 +1,5 @@
+import type {ContextAttachment} from "../../context/types";
+import type {AgentMode} from "../modes";
 import {SQL_TEMPLATES} from "./sqlHints";
 
 export function buildModeSystemPrompt(mode: AgentMode, extras: {
@@ -9,9 +11,7 @@ export function buildModeSystemPrompt(mode: AgentMode, extras: {
     const modeBlock =
         mode === "ask"
             ? "当前模式：**问答**。你只能使用只读与 UI 导航工具，不得修改笔记内容。"
-            : mode === "edit"
-            ? "当前模式：**编辑**。优先按块增删改以保留块 ID；仅当结构大幅重组或多数段落都要改时才用 edit_document。"
-            : "当前模式：**Agent**。可自主多步调用工具完成任务，低风险写入自动执行。";
+            : "当前模式：**智能体**。可自主多步调用工具完成任务，低风险写入自动执行。";
 
     const parts = [
         "你是思源笔记（SiYuan）专业 Agent，运行在用户本地工作空间。",

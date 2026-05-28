@@ -1,6 +1,7 @@
 import type {ChatMessage, OpenAiToolCallChunk} from "../../agent/types";
 import {scrollDiffToFirstChange} from "../../editor/diffEngine";
 import {resolveInlineToolDiff} from "./inlineToolActions";
+import {compactKernelResponseText} from "../../tools/truncate";
 import {buildToolCallStreamPreview} from "./toolCallStreamPreview";
 
 function escapeHtml(s: string): string {
@@ -52,7 +53,7 @@ function formatToolResultPreview(name: string, text: string): string {
                 return `已从笔记本删除文档${refNote}`;
             }
         }
-        return JSON.stringify(o, null, 2);
+        return compactKernelResponseText(o);
     } catch {
         return text;
     }
@@ -74,8 +75,15 @@ function isToolCallArgsComposing(
     return !preview.parseComplete;
 }
 
-function isLongFieldLabel(label: string): boolean {
-    return label.includes("Markdown") || label.includes("正文") || label === "SQL";
+function isLongFieldLabel(label: string, value: string): boolean {
+    return (
+        label.includes("Markdown") ||
+        label.includes("正文") ||
+        label.includes("批量") ||
+        label === "SQL" ||
+        value.length > 200 ||
+        value.includes("\n")
+    );
 }
 
 const STREAMING_PRE_THROTTLE_MS = 80;
@@ -112,7 +120,11 @@ function previewStreamingFieldValue(value: string, streaming: boolean): string {
     if (!streaming || value.length <= STREAMING_FIELD_PREVIEW_CHARS) {
         return value;
     }
-    return `${value.slice(0, STREAMING_FIELD_PREVIEW_CHARS)}\n…（流式生成中，共 ${value.length.toLocaleString()} 字符）`;
+    return `${value.slice(0, STREAMING_FIELD_PREVIEW_CHARS)}\n…（共 ${value.length.toLocaleString()} 字符）`;
+}
+
+function isGenericProgressHint(text: string): boolean {
+    return text === "执行中…" || text === "等待执行…";
 }
 
 function patchSummaryStatus(
@@ -186,16 +198,6 @@ function ensureCardBody(card: HTMLDetailsElement): HTMLElement {
     return body;
 }
 
-function ensureHint(body: HTMLElement): HTMLParagraphElement {
-    let hint = body.querySelector(".agent-tool-card__hint") as HTMLParagraphElement | null;
-    if (!hint) {
-        hint = document.createElement("p");
-        hint.className = "agent-tool-card__hint";
-        body.prepend(hint);
-    }
-    return hint;
-}
-
 function ensureFieldsSection(body: HTMLElement, labelText: string): HTMLElement {
     let section = body.querySelector(".agent-tool-card__section--fields") as HTMLElement | null;
     if (!section) {
@@ -219,19 +221,13 @@ function patchPreviewFields(
     composing: boolean,
 ): void {
     const preview = buildToolCallStreamPreview(toolName, argsJson);
-    const labelText = composing ? "参数预览" : "参数";
-
-    if (composing) {
-        const hint = ensureHint(body);
-        hint.hidden = false;
-        hint.textContent = preview.parseComplete ? "参数已生成，等待执行…" : "正在流式生成参数…";
-    } else {
-        body.querySelector(".agent-tool-card__hint")?.remove();
-    }
+    body.querySelector(".agent-tool-card__hint")?.remove();
+    const labelText = "参数";
 
     if (preview.fields.length === 0) {
         body.querySelector(".agent-tool-card__section--fields")?.remove();
-        if (!composing) {
+        const showRaw = !composing || argsJson.trim().length > 0;
+        if (showRaw) {
             let fallback = body.querySelector(".agent-tool-card__section--raw") as HTMLElement | null;
             if (!fallback) {
                 fallback = document.createElement("div");
@@ -241,7 +237,10 @@ function patchPreviewFields(
                 fallback.appendChild(pre);
                 body.appendChild(fallback);
             }
-            patchPreText(fallback.querySelector("pre")!, formatArgs(argsJson));
+            const label = fallback.querySelector(".agent-tool-card__label")!;
+            label.textContent = "参数";
+            const display = composing ? argsJson.trim() || "{}" : formatArgs(argsJson);
+            patchPreText(fallback.querySelector("pre")!, display, composing);
         } else {
             body.querySelector(".agent-tool-card__section--raw")?.remove();
         }
@@ -265,9 +264,8 @@ function patchPreviewFields(
     const usedKeys = new Set<string>();
     for (const f of preview.fields) {
         const key = fieldKey(f.label);
-        const suffix = f.streaming ? " ·" : "";
         const countSuffix = f.value.length > 200 ? `（${f.value.length} 字符）` : "";
-        const dtLabel = `${f.label}${countSuffix}${suffix}`;
+        const dtLabel = `${f.label}${countSuffix}`;
 
         let row = existing.get(key);
         if (!row) {
@@ -283,7 +281,7 @@ function patchPreviewFields(
         }
         usedKeys.add(key);
 
-        if (isLongFieldLabel(f.label)) {
+        if (isLongFieldLabel(f.label, f.value)) {
             let pre = row.dd.querySelector(".agent-tool-card__field-pre") as HTMLPreElement | null;
             if (!pre) {
                 row.dd.replaceChildren();
@@ -381,7 +379,12 @@ function patchToolCard(
     const argsJson = tc.function.arguments ?? "";
     const awaitingDiff = diff?.status === "pending";
 
-    card.open = composing || awaitingDiff || status === "running" || !status;
+    // 流式/执行中自动展开；已完成或空闲时不改写 open，避免正文 patch 把用户手动展开又折回去
+    const shouldAutoExpand =
+        composing || awaitingDiff || status === "running" || status === undefined;
+    if (shouldAutoExpand) {
+        card.open = true;
+    }
 
     const summary = card.querySelector("summary");
     if (summary) {
@@ -404,16 +407,10 @@ function patchToolCard(
             patchSummaryStatus(summary, false, "running");
         }
         patchStatusHint(body, "请查看下方 diff 并选择是否应用");
-    } else if (!composing) {
-        if (status === "running") {
-            patchStatusHint(body, hint ?? "执行中…");
-        } else if (confirm?.status === "rejected") {
-            patchStatusHint(body, "已拒绝执行");
-        } else if (!status) {
-            patchStatusHint(body, hint ?? "等待执行…");
-        } else {
-            patchStatusHint(body, null);
-        }
+    } else if (confirm?.status === "rejected") {
+        patchStatusHint(body, "已拒绝执行");
+    } else if (hint && !isGenericProgressHint(hint)) {
+        patchStatusHint(body, hint);
     } else {
         patchStatusHint(body, null);
     }
