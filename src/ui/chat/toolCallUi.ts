@@ -379,13 +379,6 @@ function patchToolCard(
     const argsJson = tc.function.arguments ?? "";
     const awaitingDiff = diff?.status === "pending";
 
-    // 流式/执行中自动展开；已完成或空闲时不改写 open，避免正文 patch 把用户手动展开又折回去
-    const shouldAutoExpand =
-        composing || awaitingDiff || status === "running" || status === undefined;
-    if (shouldAutoExpand) {
-        card.open = true;
-    }
-
     const summary = card.querySelector("summary");
     if (summary) {
         patchSummaryStatus(summary, composing, status);

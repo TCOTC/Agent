@@ -1,5 +1,5 @@
 import {DEEPSEEK_DEFAULT_BASE_URL, RISK_AUTO_APPROVE_MAX} from "../core/constants";
-import type {PersistedSettings} from "./types";
+import type {PersistedSettings, SendKeyMode} from "./types";
 
 export const STORAGE_KEY_SETTINGS = "settings.json";
 
@@ -13,7 +13,10 @@ export const defaultSettings: PersistedSettings = {
     worksetNotebookIds: [],
     riskAutoApproveMax: RISK_AUTO_APPROVE_MAX,
     modelContextLimits: {},
+    sendKeyMode: "enter",
 };
+
+const SEND_KEY_MODES = new Set<SendKeyMode>(["enter", "ctrlEnter"]);
 
 type SettingsKey = keyof typeof defaultSettings;
 
@@ -59,6 +62,12 @@ export function normalizeSettings(raw: unknown): PersistedSettings {
     for (const key of settingsKeys) {
         if (key === "modelContextLimits") {
             settings[key] = coerceModelContextLimits(o[key]);
+            continue;
+        }
+        if (key === "sendKeyMode") {
+            settings[key] = SEND_KEY_MODES.has(o[key] as SendKeyMode)
+                ? (o[key] as SendKeyMode)
+                : defaultSettings.sendKeyMode;
             continue;
         }
         settings[key] = coerceSettingValue(o[key], defaultSettings[key]);

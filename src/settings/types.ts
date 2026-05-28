@@ -1,3 +1,6 @@
+/** 输入框发送快捷键模式 */
+export type SendKeyMode = "enter" | "ctrlEnter";
+
 /** 写入 settings.json 的插件配置 */
 export interface PersistedSettings {
     baseUrl: string;
@@ -14,4 +17,6 @@ export interface PersistedSettings {
     riskAutoApproveMax: number;
     /** 按模型 ID 覆盖上下文窗口上限（tokens） */
     modelContextLimits: Record<string, number>;
+    /** 发送快捷键：回车 发送 或 Ctrl+回车 发送 */
+    sendKeyMode: SendKeyMode;
 }

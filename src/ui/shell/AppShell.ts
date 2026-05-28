@@ -27,6 +27,7 @@ import {
 } from "../../session/storage";
 import type {ChatSession, SessionsPersisted} from "../../session/types";
 import {normalizeSettings, STORAGE_KEY_SETTINGS} from "../../settings/storage";
+import {getSendKeyHintHtml, handleComposerEnterKey} from "../../settings/sendKey";
 import type {PersistedSettings} from "../../settings/types";
 import {mountTimelinePanel, parseJsonlLines} from "../activity/TimelinePanel";
 import {
@@ -550,6 +551,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const msgs = getActive().messages;
 
         if (!msgs.length) {
+            const sendHint = getSendKeyHintHtml(normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]).sendKeyMode);
             elMessages.innerHTML = `<div class="agent-empty">
 <h3>Agent 已就绪</h3>
 <p>问答 · 多步工具 · 文档 Diff 编辑</p>
@@ -557,7 +559,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 <li><kbd>/doc</kbd> 读取当前文档</li>
 <li><kbd>@</kbd> 搜索并引用块</li>
 <li><kbd>Shift+Tab</kbd> 切换模式</li>
-<li><kbd>Ctrl+Enter</kbd> 发送</li>
+<li>${sendHint}</li>
 </ul>
 </div>`;
             return;
@@ -946,10 +948,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         cancelPendingInlineActions();
     });
     elInput.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
-            ev.preventDefault();
-            void runSend();
-        }
+        const sendKeyMode = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]).sendKeyMode;
+        handleComposerEnterKey(ev, elInput, sendKeyMode, () => void runSend());
         if (ev.key === "Tab" && ev.shiftKey) {
             ev.preventDefault();
             cycleMode(1);

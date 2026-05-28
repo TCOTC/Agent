@@ -9,6 +9,7 @@ import {
     getModelContextLimitOverride,
 } from "../core/tokenUsage";
 import {defaultSettings, normalizeSettings, STORAGE_KEY_SETTINGS} from "./storage";
+import {SEND_KEY_MODE_OPTIONS} from "./sendKey";
 
 export function attachPluginSettingPanel(plugin: Agent): void {
     const elApiKey = document.createElement("input");
@@ -19,6 +20,7 @@ export function attachPluginSettingPanel(plugin: Agent): void {
     const elWorkset = document.createElement("textarea");
     const elRisk = document.createElement("input");
     const elContextLimit = document.createElement("input");
+    const elSendKeyMode = document.createElement("select");
     elThinking.type = "checkbox";
     elRisk.type = "number";
     elContextLimit.type = "number";
@@ -109,6 +111,7 @@ export function attachPluginSettingPanel(plugin: Agent): void {
                 worksetNotebookIds: ids,
                 riskAutoApproveMax: Number(elRisk.value) || defaultSettings.riskAutoApproveMax,
                 modelContextLimits: limits,
+                sendKeyMode: elSendKeyMode.value,
             });
             void plugin.saveData(STORAGE_KEY_SETTINGS, s);
             plugin.data[STORAGE_KEY_SETTINGS] = s;
@@ -177,6 +180,20 @@ export function attachPluginSettingPanel(plugin: Agent): void {
         createActionElement: () => {
             elMode.value = (plugin.data[STORAGE_KEY_SETTINGS] as typeof defaultSettings).defaultMode;
             return elMode;
+        },
+    });
+
+    elSendKeyMode.className = "b3-select fn__block";
+    elSendKeyMode.innerHTML = SEND_KEY_MODE_OPTIONS.map((o) =>
+        `<option value="${o.id}">${o.label}</option>`,
+    ).join("");
+    plugin.setting.addItem({
+        title: "发送快捷键",
+        description: SEND_KEY_MODE_OPTIONS.map((o) => o.description).join("；"),
+        createActionElement: () => {
+            const s = plugin.data[STORAGE_KEY_SETTINGS] as typeof defaultSettings;
+            elSendKeyMode.value = s.sendKeyMode ?? defaultSettings.sendKeyMode;
+            return elSendKeyMode;
         },
     });
 
