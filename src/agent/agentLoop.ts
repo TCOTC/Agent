@@ -11,6 +11,8 @@ import type {ThinkingLevel} from "../core/agent/types";
 
 export interface RunAgentLoopParams {
     plugin: Agent;
+    /** 所属聊天会话 id，用于多 run 并行时定位 Agent 实例 */
+    sessionId: string;
     kernel?: KernelExecutor;
     llm: DeepSeekConfig;
     mode: AgentMode;
@@ -38,6 +40,10 @@ export type RunAgentLoopOutcome =
     | {kind: "unexpected_error"; message: string};
 
 import type {AssistantMessageEvent} from "../core/agent/types";
+
+type AgentSdkSession = ReturnType<typeof createAgentSession>;
+
+const agentSessionsById = new Map<string, AgentSdkSession>();
 
 function applyMdStreamingFlag(
     messages: ChatMessage[],
@@ -96,12 +102,30 @@ function mapOutcome(outcome: AgentRunOutcome): RunAgentLoopOutcome {
     };
 }
 
-let activeAgentSession: ReturnType<typeof createAgentSession> | null = null;
-let activeAgentSessionDepth = 0;
+/** 指定会话的 Agent SDK 实例（多 run 并行时按 sessionId 查询） */
+export function getAgentSession(sessionId: string): AgentSdkSession | null {
+    return agentSessionsById.get(sessionId) ?? null;
+}
 
-/** 当前运行中的 Agent 会话（供会话内确认 UI 写回状态） */
-export function getActiveAgentSession(): typeof activeAgentSession {
-    return activeAgentSession;
+/**
+ * 兼容旧调用：传入 sessionId 时精确查找；未传且仅有一个 run 时返回该实例。
+ */
+export function getActiveAgentSession(sessionId?: string): AgentSdkSession | null {
+    if (sessionId) {
+        return getAgentSession(sessionId);
+    }
+    if (agentSessionsById.size === 1) {
+        return agentSessionsById.values().next().value ?? null;
+    }
+    return null;
+}
+
+/** 卸载或重置时中止所有运行中的 Agent */
+export function abortAllAgentSessions(): void {
+    for (const session of agentSessionsById.values()) {
+        session.abort();
+    }
+    agentSessionsById.clear();
 }
 
 /**
@@ -112,7 +136,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
         const kernel = p.kernel ?? createFetchSyncKernelExecutor();
         const thinkingLevel: ThinkingLevel = p.llm.thinkingEnabled === false ? "off" : "high";
 
-        let session!: ReturnType<typeof createAgentSession>;
+        let session!: AgentSdkSession;
 
         const syncMessages = () => {
             syncChatMessagesFromAgent(
@@ -169,8 +193,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
 
         p.onRunReady?.({abort: () => session.abort()});
 
-        activeAgentSession = session;
-        activeAgentSessionDepth++;
+        agentSessionsById.set(p.sessionId, session);
         try {
             const outcome = await session.prompt(p.userText, p.signal);
 
@@ -178,10 +201,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
 
             return mapOutcome(outcome);
         } finally {
-            activeAgentSessionDepth = Math.max(0, activeAgentSessionDepth - 1);
-            if (activeAgentSessionDepth === 0) {
-                activeAgentSession = null;
-            }
+            agentSessionsById.delete(p.sessionId);
         }
     } catch (e) {
         return {kind: "unexpected_error", message: e instanceof Error ? e.message : String(e)};

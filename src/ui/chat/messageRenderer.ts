@@ -3,6 +3,7 @@ import {AGENT_ICON_IDS, agentIconHtml} from "../../icons/agentIcons";
 import type {LuteEngine} from "../../render/lute";
 import {forgetStreamMdCache} from "../../render/streamMdRender";
 import {syncAssistantContentDom, syncAssistantReasoningDom} from "../../render/streamingDom";
+import {readSessionIdFromMessagesEl} from "./inlineToolActions";
 import {renderAssistantConfirmBanner} from "./toolConfirmBanner";
 import {renderAssistantToolCalls} from "./toolCallUi";
 
@@ -106,6 +107,7 @@ export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
 }
 
 export interface PatchAssistantToolingOptions {
+    sessionId?: string;
     onConfirmNotify?: (message: string, anchorEl: HTMLElement) => void;
 }
 
@@ -132,9 +134,11 @@ export function patchAssistantTooling(
     options: PatchAssistantToolingOptions = {},
 ): void {
     ensureConfirmsAfterTools(row);
+    const sessionId = options.sessionId ?? readSessionIdFromMessagesEl(row);
     const onNotify = options.onConfirmNotify ?? confirmNotifyHandler;
-    renderAssistantConfirmBanner(row, m, {onNotify});
+    renderAssistantConfirmBanner(row, m, {sessionId, onNotify});
     renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m, {
+        sessionId,
         llmStreaming: m._streaming === true,
     });
 }

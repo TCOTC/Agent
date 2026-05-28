@@ -1,5 +1,5 @@
 import type {ChatMessage, ToolConfirmInfo} from "../../agent/types";
-import {resolveInlineToolConfirm} from "./inlineToolActions";
+import {pendingActionKey, readSessionIdFromMessagesEl, resolveInlineToolConfirm} from "./inlineToolActions";
 
 const notifiedPendingIds = new Set<string>();
 
@@ -9,6 +9,8 @@ export function clearConfirmNotifications(): void {
 }
 
 export interface RenderConfirmBannerOptions {
+    /** 所属会话 id（缺省时从 data-messages 读取） */
+    sessionId?: string;
     /** 首次出现待确认项时提醒用户（如 showPluginMessage） */
     onNotify?: (message: string, anchorEl: HTMLElement) => void;
 }
@@ -33,7 +35,7 @@ function dismissConfirmPanel(host: HTMLElement, toolCallId: string): void {
     }
 }
 
-function bindConfirmPanel(panel: HTMLElement, toolCallId: string): void {
+function bindConfirmPanel(panel: HTMLElement, sessionId: string, toolCallId: string): void {
     if (panel.hasAttribute("data-bound")) {
         return;
     }
@@ -45,16 +47,17 @@ function bindConfirmPanel(panel: HTMLElement, toolCallId: string): void {
         } else {
             panel.remove();
         }
-        resolveInlineToolConfirm(toolCallId, approved);
+        resolveInlineToolConfirm(sessionId, toolCallId, approved);
     };
     panel.querySelector("[data-approve]")?.addEventListener("click", () => finish(true));
     panel.querySelector("[data-reject]")?.addEventListener("click", () => finish(false));
 }
 
-function createConfirmPanel(toolCallId: string): HTMLElement {
+function createConfirmPanel(sessionId: string, toolCallId: string): HTMLElement {
     const panel = document.createElement("div");
     panel.className = "agent-msg-confirm";
     panel.dataset.confirmId = toolCallId;
+    panel.dataset.agentSessionId = sessionId;
     panel.setAttribute("role", "alert");
     panel.innerHTML = `
 <div class="agent-msg-confirm__badge">待确认</div>
@@ -71,7 +74,7 @@ function createConfirmPanel(toolCallId: string): HTMLElement {
   <button type="button" class="b3-button b3-button--cancel" data-reject>拒绝</button>
   <button type="button" class="b3-button b3-button--text agent-msg-confirm__approve" data-approve>允许执行</button>
 </div>`;
-    bindConfirmPanel(panel, toolCallId);
+    bindConfirmPanel(panel, sessionId, toolCallId);
     return panel;
 }
 
@@ -104,6 +107,11 @@ export function renderAssistantConfirmBanner(
         return;
     }
 
+    const sessionId = options.sessionId ?? readSessionIdFromMessagesEl(row);
+    if (!sessionId) {
+        return;
+    }
+
     const pending = Object.entries(m._toolConfirm ?? {}).filter(([, v]) => v.status === "pending");
     if (!pending.length) {
         host.replaceChildren();
@@ -120,13 +128,18 @@ export function renderAssistantConfirmBanner(
             `[data-confirm-id="${CSS.escape(toolCallId)}"]`,
         ) as HTMLElement | null;
         if (!panel) {
-            panel = createConfirmPanel(toolCallId);
+            panel = createConfirmPanel(sessionId, toolCallId);
             host.appendChild(panel);
+        } else if (panel.dataset.agentSessionId !== sessionId) {
+            panel.dataset.agentSessionId = sessionId;
+            panel.removeAttribute("data-bound");
+            bindConfirmPanel(panel, sessionId, toolCallId);
         }
         patchConfirmPanel(panel, m, toolCallId, info);
 
-        if (!notifiedPendingIds.has(toolCallId)) {
-            notifiedPendingIds.add(toolCallId);
+        const notifyKey = pendingActionKey(sessionId, toolCallId);
+        if (!notifiedPendingIds.has(notifyKey)) {
+            notifiedPendingIds.add(notifyKey);
             const name = toolNameForId(m, toolCallId);
             options.onNotify?.(
                 `Agent 等待确认：${name}。请在对话中高亮区域点击「允许执行」或「拒绝」。`,

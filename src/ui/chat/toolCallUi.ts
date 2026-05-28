@@ -1,6 +1,6 @@
 import type {ChatMessage, OpenAiToolCallChunk} from "../../agent/types";
 import {scrollDiffToFirstChange} from "../../editor/diffEngine";
-import {resolveInlineToolDiff} from "./inlineToolActions";
+import {readSessionIdFromMessagesEl, resolveInlineToolDiff} from "./inlineToolActions";
 import {compactKernelResponseText} from "../../tools/truncate";
 import {buildToolCallStreamPreview} from "./toolCallStreamPreview";
 
@@ -307,7 +307,12 @@ function patchPreviewFields(
     }
 }
 
-function patchDiffBlock(body: HTMLElement, toolCallId: string, diff: NonNullable<ChatMessage["_toolDiff"]>[string]): void {
+function patchDiffBlock(
+    body: HTMLElement,
+    sessionId: string,
+    toolCallId: string,
+    diff: NonNullable<ChatMessage["_toolDiff"]>[string],
+): void {
     let block = body.querySelector(".agent-tool-card__diff") as HTMLElement | null;
     if (diff.status !== "pending") {
         block?.remove();
@@ -326,8 +331,8 @@ function patchDiffBlock(body: HTMLElement, toolCallId: string, diff: NonNullable
 </div>`;
         const approve = block.querySelector("[data-approve]") as HTMLButtonElement;
         const reject = block.querySelector("[data-reject]") as HTMLButtonElement;
-        approve.addEventListener("click", () => resolveInlineToolDiff(toolCallId, true));
-        reject.addEventListener("click", () => resolveInlineToolDiff(toolCallId, false));
+        approve.addEventListener("click", () => resolveInlineToolDiff(sessionId, toolCallId, true));
+        reject.addEventListener("click", () => resolveInlineToolDiff(sessionId, toolCallId, false));
         body.appendChild(block);
     }
     const head = block.querySelector(".agent-tool-card__diff-head")!;
@@ -370,6 +375,7 @@ function patchToolCard(
     tc: OpenAiToolCallChunk,
     m: ChatMessage,
     composing: boolean,
+    sessionId: string,
 ): void {
     const status = m._toolStatus?.[tc.id];
     const hint = m._toolHint?.[tc.id];
@@ -413,7 +419,7 @@ function patchToolCard(
     body.querySelector(".agent-tool-card__confirm")?.remove();
 
     if (diff) {
-        patchDiffBlock(body, tc.id, diff);
+        patchDiffBlock(body, sessionId, tc.id, diff);
     } else {
         body.querySelector(".agent-tool-card__diff")?.remove();
     }
@@ -431,6 +437,8 @@ function createToolCard(toolName: string, toolCallId: string): HTMLDetailsElemen
 }
 
 export interface RenderToolCallsOptions {
+    /** 所属会话 id（缺省时从 data-messages 读取） */
+    sessionId?: string;
     /** LLM 仍在流式输出 assistant（含 tool call JSON 生成阶段） */
     llmStreaming?: boolean;
 }
@@ -448,6 +456,11 @@ export function renderAssistantToolCalls(
     }
     host.hidden = false;
 
+    const sessionId = options.sessionId ?? readSessionIdFromMessagesEl(host);
+    if (!sessionId) {
+        return;
+    }
+
     const llmStreaming = options.llmStreaming === true;
     const seen = new Set<string>();
 
@@ -459,7 +472,7 @@ export function renderAssistantToolCalls(
             card = createToolCard(tc.function.name, id);
             host.appendChild(card);
         }
-        patchToolCard(card, tc, m, isToolCallArgsComposing(tc, llmStreaming, m));
+        patchToolCard(card, tc, m, isToolCallArgsComposing(tc, llmStreaming, m), sessionId);
     }
 
     for (const old of host.querySelectorAll(".agent-tool-card")) {

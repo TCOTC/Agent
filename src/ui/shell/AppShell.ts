@@ -1,5 +1,5 @@
 import type Agent from "../../index";
-import {getActiveAgentSession, runAgentLoop} from "../../agent/agentLoop";
+import {abortAllAgentSessions, runAgentLoop} from "../../agent/agentLoop";
 import {AGENT_MODES, type AgentMode} from "../../agent/modes";
 import type {AuditEvent, ChatMessage, ToolConfirmRequest, ToolDiffPreviewInfo} from "../../agent/types";
 import {listDeepSeekModels} from "../../agent/deepseekClient";
@@ -62,7 +62,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const mountedAt = Date.now();
     let destroyed = false;
     let renderSeq = 0;
-    let streamRaf = 0;
+    const streamRafBySession = new Map<string, number>();
     type SessionRunHandle = {
         sessionId: string;
         messages: ChatMessage[];
@@ -112,7 +112,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
         run.ctl.abort();
         run.abortAgent();
-        cancelPendingInlineActions();
+        cancelPendingInlineActions(sessionId);
     };
 
     const resumeStreamRenderIfNeeded = () => {
@@ -478,19 +478,21 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }, 5000);
     };
 
-    const pushAudit = (e: AuditEvent) => {
+    const pushAudit = (e: AuditEvent, sessionId?: string) => {
         activityBuf.push(e);
         if (e.kind === "llm_response" && e.usage) {
             const u = parseDeepSeekUsage(e.usage);
             if (u) {
-                const s = getActive();
+                const s = getSessionById(sessionId ?? sessions.activeId) ?? getActive();
                 s.tokenUsage = mergeUsage(s.tokenUsage, u);
                 if (u.promptTokens > 0) {
                     s.lastContextTokens = u.promptTokens;
                 }
-                updateContextRing();
+                if ((sessionId ?? sessions.activeId) === sessions.activeId) {
+                    updateContextRing();
+                }
                 persistSessions();
-                void persistTokenStats(u);
+                void persistTokenStats(u, sessionId);
             }
         }
         if (activeTab === "activity") {
@@ -499,14 +501,15 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         scheduleActivityFlush();
     };
 
-    const persistTokenStats = async (delta: TokenUsageRecord) => {
+    const persistTokenStats = async (delta: TokenUsageRecord, sessionId?: string) => {
         const raw = (await plugin.loadData(STORAGE_KEY_TOKEN_STATS)) as TokenStatsPersisted | null;
         const base: TokenStatsPersisted = raw?.lifetime
             ? raw
             : {lifetime: {promptTokens: 0, completionTokens: 0, totalTokens: 0}, sessions: {}, lastUpdated: ""};
         base.lifetime = mergeUsage(base.lifetime, delta);
-        base.sessions[sessions.activeId] = mergeUsage(
-            base.sessions[sessions.activeId] ?? {promptTokens: 0, completionTokens: 0, totalTokens: 0},
+        const statsSessionId = sessionId ?? sessions.activeId;
+        base.sessions[statsSessionId] = mergeUsage(
+            base.sessions[statsSessionId] ?? {promptTokens: 0, completionTokens: 0, totalTokens: 0},
             delta,
         );
         base.lastUpdated = new Date().toISOString();
@@ -577,13 +580,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         if (destroyed) {
             return;
         }
-        if (streamRaf) {
-            cancelAnimationFrame(streamRaf);
+        const streamSessionId = originSessionId ?? sessions.activeId;
+        const prevRaf = streamRafBySession.get(streamSessionId);
+        if (prevRaf) {
+            cancelAnimationFrame(prevRaf);
         }
-        const streamSessionId = originSessionId;
-        streamRaf = requestAnimationFrame(() => {
-            streamRaf = 0;
-            if (streamSessionId && streamSessionId !== sessions.activeId) {
+        const raf = requestAnimationFrame(() => {
+            streamRafBySession.delete(streamSessionId);
+            if (streamSessionId !== sessions.activeId) {
                 persistSessions();
                 return;
             }
@@ -617,6 +621,16 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             }
             void renderMessages();
         });
+        streamRafBySession.set(streamSessionId, raf);
+    };
+
+    const scheduleStreamRenderForAllRuns = () => {
+        scheduleStreamRender(sessions.activeId);
+        for (const sid of sessionRuns.keys()) {
+            if (sid !== sessions.activeId) {
+                scheduleStreamRender(sid);
+            }
+        }
     };
 
     const refreshInlineActionUi = (sessionId?: string) => {
@@ -650,8 +664,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     });
 
     bindInlineToolActionHandlers({
-        onConfirm: (toolCallId, approved) => {
-            const sessionId = sessions.activeId;
+        onConfirm: (sessionId, toolCallId, approved) => {
             const aborted = getSessionRunSignal(sessionId)?.aborted === true;
             const chatAsst = findLatestAssistantMessage(getAgentSyncMessages(sessionId));
             if (!chatAsst?._toolConfirm?.[toolCallId]) {
@@ -673,8 +686,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             }
             refreshInlineActionUi(sessionId);
         },
-        onDiff: (toolCallId, approved) => {
-            const sessionId = sessions.activeId;
+        onDiff: (sessionId, toolCallId, approved) => {
             const chatAsst = findLatestAssistantMessage(getAgentSyncMessages(sessionId));
             if (!chatAsst?._toolDiff?.[toolCallId]) {
                 return;
@@ -700,6 +712,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
         const seq = ++renderSeq;
         const msgs = getActive().messages;
+        elMessages.dataset.sessionId = sessions.activeId;
 
         if (!msgs.length) {
             const sendHint = getSendKeyHintHtml(normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]).sendKeyMode);
@@ -973,6 +986,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         try {
             outcome = await runAgentLoop({
                 plugin,
+                sessionId: sendSessionId,
                 mode: sess.mode,
                 llm: {
                     baseUrl: settings.baseUrl,
@@ -983,23 +997,25 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 messages: sess.messages,
                 userText: text,
                 signal: runSignal,
-                onAudit: pushAudit,
+                onAudit: (e) => pushAudit(e, sendSessionId),
                 onStreamDelta: () => scheduleStreamRender(sendSessionId),
                 onMessagesChanged: () => {
                     scheduleStreamRender(sendSessionId);
                     if (sendSessionId === sessions.activeId) {
-                        updateContextRing();
-                    }
+                    updateContextRing();
+                }
                 },
                 customInstructions: [settings.customInstructions, sess.customInstructions].filter(Boolean).join("\n"),
                 worksetNotebookIds: settings.worksetNotebookIds,
                 riskAutoApproveMax: settings.riskAutoApproveMax,
                 requestConfirm: createInlineToolConfirm(
+                    sendSessionId,
                     () => scheduleStreamRender(sendSessionId),
                     () => getSessionRunSignal(sendSessionId),
                     (req) => handleToolConfirmRequired(sendSessionId, req),
                 ),
                 showDiffPreview: createInlineDiffPreview(
+                    sendSessionId,
                     () => scheduleStreamRender(sendSessionId),
                     (toolCallId, html, title) => attachDiffToMessages(sendSessionId, toolCallId, html, title),
                     () => getSessionRunSignal(sendSessionId),
@@ -1207,8 +1223,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
     });
 
-    const offMessages = agentBus.on(AgentEvents.MESSAGES_RENDER, () => scheduleStreamRender());
-    const offStream = agentBus.on(AgentEvents.STREAM_DELTA, () => scheduleStreamRender());
+    const offMessages = agentBus.on(AgentEvents.MESSAGES_RENDER, () => scheduleStreamRenderForAllRuns());
+    const offStream = agentBus.on(AgentEvents.STREAM_DELTA, () => scheduleStreamRenderForAllRuns());
 
     modeDropdown.refresh();
     renderSessionList();
@@ -1230,7 +1246,9 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             run.abortAgent();
         }
         sessionRuns.clear();
-        getActiveAgentSession()?.abort();
+        streamRafBySession.forEach((raf) => cancelAnimationFrame(raf));
+        streamRafBySession.clear();
+        abortAllAgentSessions();
         modeDropdown.destroy();
         modelDropdown.destroy();
         flushComposerDraft();
