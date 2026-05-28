@@ -53,6 +53,8 @@ export function cancelPendingInlineActions(): void {
 export function createInlineToolConfirm(
     onRefresh: () => void,
     getAbortSignal?: () => AbortSignal | undefined,
+    /** 不依赖 DOM：确认一进入 pending 就提醒（含系统通知） */
+    onRequired?: (req: ToolConfirmRequest) => void,
 ): (req: ToolConfirmRequest) => Promise<boolean> {
     return (req) =>
         new Promise((resolve) => {
@@ -71,6 +73,7 @@ export function createInlineToolConfirm(
                 signal?.removeEventListener("abort", onAbort);
                 resolve(approved);
             });
+            onRequired?.(req);
             onRefresh();
         });
 }

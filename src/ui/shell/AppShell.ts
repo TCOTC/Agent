@@ -45,11 +45,10 @@ import {
 } from "../chat/messageRenderer";
 import {clearConfirmNotifications} from "../chat/toolConfirmBanner";
 import {
-    isSiYuanDesktopClient,
     isWindowNotVisibleToUser,
-    isWindowVisibilityDebugEnabled,
-    logWindowVisibilityDiagnostics,
-    sendSiYuanDesktopNotification,
+    clearConfirmNotifyState,
+    notifyToolConfirmRequired,
+    registerConfirmToastHandler,
 } from "../notify/desktopNotify";
 import {renderMentionMenu, searchMentionHits} from "../chat/mentionPicker";
 import {downloadTextFile, sessionToMarkdown} from "../chat/exportSession";
@@ -473,9 +472,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
     };
 
+    registerConfirmToastHandler((text) => {
+        plugin.showPluginMessage(text, 10_000, "info");
+    });
+
     const inlineRequestConfirm = createInlineToolConfirm(
         refreshInlineActionUi,
         () => abortCtl?.signal,
+        notifyToolConfirmRequired,
     );
     const inlineShowDiffPreview = createInlineDiffPreview(
         refreshInlineActionUi,
@@ -483,23 +487,10 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         () => abortCtl?.signal,
     );
 
-    bindAssistantConfirmNotify((message, anchorEl) => {
-        if (isWindowVisibilityDebugEnabled()) {
-            logWindowVisibilityDiagnostics("confirm-notify");
+    bindAssistantConfirmNotify((_message, anchorEl) => {
+        if (!isWindowNotVisibleToUser()) {
+            anchorEl.scrollIntoView({block: "center", behavior: "smooth"});
         }
-        const hidden = isWindowNotVisibleToUser();
-        // 桌面端始终尝试系统通知（platformUtils 或 Notification API）；隐藏时勿用应用内 toast（会延后到聚焦才弹）
-        if (isSiYuanDesktopClient()) {
-            void sendSiYuanDesktopNotification({
-                title: "Agent 等待确认",
-                body: message,
-            });
-        }
-        if (hidden) {
-            return;
-        }
-        plugin.showPluginMessage(message, 10_000, "info");
-        anchorEl.scrollIntoView({block: "center", behavior: "smooth"});
     });
 
     bindInlineToolActionHandlers({
@@ -1005,6 +996,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         destroyed = true;
         regenerateAfterAbort = false;
         clearConfirmNotifications();
+        clearConfirmNotifyState();
         bindAssistantConfirmNotify(undefined);
         bindInlineToolActionHandlers(null);
         cancelPendingInlineActions();

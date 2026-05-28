@@ -1,67 +1,65 @@
 import {getFrontend, platformUtils} from "siyuan";
+import type {ToolConfirmRequest} from "../../agent/types";
 
 declare const __non_webpack_require__: NodeRequire | undefined;
 
-/** localStorage 设为 `1` 时：确认提醒 / visibilitychange 会打诊断日志 */
-export const VISIBILITY_DEBUG_STORAGE_KEY = "agent-debug-visibility";
+const SIYUAN_CMD = "siyuan-cmd";
+
+type SendNotificationFn = (options: {
+    title?: string;
+    body?: string;
+    delayInSeconds?: number;
+    timeoutType?: "default" | "never";
+}) => Promise<number>;
 
 type ElectronBrowserWindow = {
     isVisible(): boolean;
     isMinimized(): boolean;
 };
 
-export interface WindowVisibilityDiagnostics {
-    at: string;
-    context?: string;
-    isSiYuanDesktopClient: boolean;
-    frontend: string | null;
-    pageVisibility: {
-        hidden: boolean;
-        visibilityState: string;
-        hasFocus: boolean;
-    };
-    loaders: {
-        hasNonWebpackRequire: boolean;
-        hasRequire: boolean;
-    };
-    electron: {
-        remoteModuleLoaded: boolean;
-        remoteLoadError: string | null;
-        electronModuleLoaded: boolean;
-        electronLoadError: string | null;
-        currentWindow: {isVisible: boolean; isMinimized: boolean} | null;
-        focusedWindow: {isVisible: boolean; isMinimized: boolean} | null;
-        allWindows: Array<{isVisible: boolean; isMinimized: boolean}>;
-    };
-    derived: {
-        pageHidden: boolean;
-        electronNotVisible: boolean | null;
-        isWindowNotVisibleToUser: boolean;
-    };
+let pendingHiddenConfirmNotify: {title: string; body: string} | null = null;
+let lastConfirmNotifyBody: string | null = null;
+let confirmSystemNotifyDelivered = false;
+const notifiedConfirmToolCallIds = new Set<string>();
+let showConfirmToast: ((message: string) => void) | null = null;
+
+export function registerConfirmToastHandler(handler: (message: string) => void): void {
+    showConfirmToast = handler;
 }
 
-type RuntimeModuleLoad = {mod: unknown; error: string | null};
-
-/** 字面量模块名 + __non_webpack_require__，避免 webpack 对动态 require 报警 */
-function loadElectronRemoteModule(): RuntimeModuleLoad {
+function loadElectronRemote(): {getCurrentWindow?: () => ElectronBrowserWindow} | undefined {
     if (typeof __non_webpack_require__ === "undefined") {
-        return {mod: undefined, error: "no __non_webpack_require__"};
+        return undefined;
     }
     try {
-        return {mod: __non_webpack_require__("@electron/remote"), error: null};
-    } catch (e) {
-        return {mod: undefined, error: e instanceof Error ? e.message : String(e)};
+        return __non_webpack_require__("@electron/remote") as {
+            getCurrentWindow?: () => ElectronBrowserWindow;
+        };
+    } catch {
+        return undefined;
     }
 }
 
-function loadElectronModule(): RuntimeModuleLoad {
+function loadElectron(): {
+    ipcRenderer?: {send: (channel: string, data: unknown) => void};
+    BrowserWindow?: {
+        getFocusedWindow?: () => ElectronBrowserWindow | null;
+        getAllWindows?: () => ElectronBrowserWindow[];
+    };
+} | undefined {
     if (typeof __non_webpack_require__ === "undefined") {
-        return {mod: undefined, error: "no __non_webpack_require__"};
+        return undefined;
     }
     try {
-        return {mod: __non_webpack_require__("electron"), error: null};
-    } catch (e) {
-        return {mod: undefined, error: e instanceof Error ? e.message : String(e)};
+        return __non_webpack_require__("electron") as {
+            ipcRenderer?: {send: (channel: string, data: unknown) => void};
+            BrowserWindow?: {
+                getFocusedWindow?: () => ElectronBrowserWindow | null;
+                getAllWindows?: () => ElectronBrowserWindow[];
+            };
+        };
+    } catch {
+        return undefined;
     }
 }
 
@@ -71,104 +69,9 @@ function snapshotWindow(win: ElectronBrowserWindow | null | undefined) {
     }
     try {
         return {isVisible: win.isVisible(), isMinimized: win.isMinimized()};
-    } catch (e) {
+    } catch {
         return null;
     }
-}
-
-/** 采集各信号快照，供控制台对比「前台 / 最小化 / 托盘隐藏」等场景 */
-export function getWindowVisibilityDiagnostics(context?: string): WindowVisibilityDiagnostics {
-    let frontend: string | null = null;
-    try {
-        frontend = getFrontend();
-    } catch {
-        frontend = null;
-    }
-
-    const remoteLoad = loadElectronRemoteModule();
-    const remote = remoteLoad.mod as {
-        getCurrentWindow?: () => ElectronBrowserWindow;
-    } | undefined;
-
-    const electronLoad = loadElectronModule();
-    const electron = electronLoad.mod as {
-        BrowserWindow?: {
-            getFocusedWindow?: () => ElectronBrowserWindow | null;
-            getAllWindows?: () => ElectronBrowserWindow[];
-        };
-    } | undefined;
-
-    const currentWindow = snapshotWindow(remote?.getCurrentWindow?.());
-    const focusedWindow = snapshotWindow(electron?.BrowserWindow?.getFocusedWindow?.() ?? null);
-    let allWindows: Array<{isVisible: boolean; isMinimized: boolean}> = [];
-    try {
-        allWindows = (electron?.BrowserWindow?.getAllWindows?.() ?? [])
-            .map((w) => snapshotWindow(w))
-            .filter((w): w is {isVisible: boolean; isMinimized: boolean} => w != null);
-    } catch {
-        allWindows = [];
-    }
-
-    const pageHidden = document.hidden || document.visibilityState === "hidden";
-    const electronNotVisible = probeElectronWindowNotVisible();
-
-    return {
-        at: new Date().toISOString(),
-        context,
-        isSiYuanDesktopClient: isSiYuanDesktopClient(),
-        frontend,
-        pageVisibility: {
-            hidden: document.hidden,
-            visibilityState: document.visibilityState,
-            hasFocus: document.hasFocus(),
-        },
-        loaders: {
-            hasNonWebpackRequire: typeof __non_webpack_require__ !== "undefined",
-            hasRequire: typeof require !== "undefined",
-        },
-        electron: {
-            remoteModuleLoaded: remote != null,
-            remoteLoadError: remoteLoad.error,
-            electronModuleLoaded: electron != null,
-            electronLoadError: electronLoad.error,
-            currentWindow,
-            focusedWindow,
-            allWindows,
-        },
-        derived: {
-            pageHidden,
-            electronNotVisible,
-            isWindowNotVisibleToUser: isWindowNotVisibleToUser(),
-        },
-    };
-}
-
-export function isWindowVisibilityDebugEnabled(): boolean {
-    try {
-        return localStorage.getItem(VISIBILITY_DEBUG_STORAGE_KEY) === "1";
-    } catch {
-        return false;
-    }
-}
-
-export function logWindowVisibilityDiagnostics(context?: string): WindowVisibilityDiagnostics {
-    const diag = getWindowVisibilityDiagnostics(context);
-    console.group(`[Agent] window visibility${context ? ` (${context})` : ""}`);
-    console.log(diag);
-    console.table({
-        pageHidden: diag.derived.pageHidden,
-        electronNotVisible: diag.derived.electronNotVisible,
-        isWindowNotVisibleToUser: diag.derived.isWindowNotVisibleToUser,
-        "document.hidden": diag.pageVisibility.hidden,
-        "visibilityState": diag.pageVisibility.visibilityState,
-        "document.hasFocus": diag.pageVisibility.hasFocus,
-        "remote.current.isVisible": diag.electron.currentWindow?.isVisible,
-        "remote.current.isMinimized": diag.electron.currentWindow?.isMinimized,
-        "electron.focused.isVisible": diag.electron.focusedWindow?.isVisible,
-        "allWindows.count": diag.electron.allWindows.length,
-    });
-    console.groupEnd();
-    return diag;
 }
 
 /** 思源桌面客户端（含独立窗口），不含浏览器与移动端 */
@@ -181,27 +84,13 @@ export function isSiYuanDesktopClient(): boolean {
     }
 }
 
-/**
- * 桌面 Electron：@electron/remote 或 BrowserWindow.getFocusedWindow。
- * 任一可见且未最小化则视为「窗口仍可见」。
- */
 function probeElectronWindowNotVisible(): boolean | undefined {
-    const remoteLoad = loadElectronRemoteModule();
-    const remote = remoteLoad.mod as {
-        getCurrentWindow?: () => ElectronBrowserWindow;
-    } | undefined;
-    const cur = snapshotWindow(remote?.getCurrentWindow?.());
+    const cur = snapshotWindow(loadElectronRemote()?.getCurrentWindow?.());
     if (cur) {
         return !cur.isVisible || cur.isMinimized;
     }
 
-    const electronLoad = loadElectronModule();
-    const electron = electronLoad.mod as {
-        BrowserWindow?: {
-            getFocusedWindow?: () => ElectronBrowserWindow | null;
-            getAllWindows?: () => ElectronBrowserWindow[];
-        };
-    } | undefined;
+    const electron = loadElectron();
     const focused = snapshotWindow(electron?.BrowserWindow?.getFocusedWindow?.() ?? null);
     if (focused) {
         return !focused.isVisible || focused.isMinimized;
@@ -211,18 +100,13 @@ function probeElectronWindowNotVisible(): boolean | undefined {
     if (!wins.length) {
         return undefined;
     }
-    // 所有窗口都不可见或最小化 → 认为用户看不见
     return wins.every((w) => {
         const s = snapshotWindow(w);
         return !s || !s.isVisible || s.isMinimized;
     });
 }
 
-/**
- * 当前窗口对用户是否「看不见」。
- * - Page Visibility（最小化、托盘隐藏等）
- * - 桌面 Electron 补充窗口状态
- */
+/** 当前窗口对用户是否「看不见」（Page Visibility + Electron 窗口状态） */
 export function isWindowNotVisibleToUser(): boolean {
     if (document.hidden || document.visibilityState === "hidden") {
         return true;
@@ -231,6 +115,55 @@ export function isWindowNotVisibleToUser(): boolean {
         return false;
     }
     return probeElectronWindowNotVisible() === true;
+}
+
+function loadSiyuanModule(): unknown {
+    if (typeof __non_webpack_require__ !== "undefined") {
+        try {
+            return __non_webpack_require__("siyuan");
+        } catch {
+            /* fall through */
+        }
+    }
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        return require("siyuan");
+    } catch {
+        return undefined;
+    }
+}
+
+function getPlatformUtilsSendNotification(): SendNotificationFn | undefined {
+    return platformUtils?.sendNotification ?? (() => {
+        const mod = loadSiyuanModule() as {platformUtils?: {sendNotification?: SendNotificationFn}} | undefined;
+        return mod?.platformUtils?.sendNotification;
+    })();
+}
+
+function isSendNotificationOk(id: number): boolean {
+    return id >= 0 || id === -1;
+}
+
+function sendNotificationViaElectronIpc(
+    title: string,
+    body: string,
+    timeoutType: "default" | "never" = "default",
+): boolean {
+    const ipc = loadElectron()?.ipcRenderer;
+    if (!ipc?.send) {
+        return false;
+    }
+    try {
+        ipc.send(SIYUAN_CMD, {
+            cmd: "notification",
+            title,
+            body,
+            timeoutType,
+        });
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 async function sendBrowserNotification(title: string, body: string): Promise<boolean> {
@@ -246,55 +179,136 @@ async function sendBrowserNotification(title: string, body: string): Promise<boo
         }
         new Notification(title, {body});
         return true;
-    } catch (e) {
-        console.warn("[Agent] Notification API failed", e);
+    } catch {
         return false;
     }
+}
+
+export function rememberConfirmNotifyBody(body: string): void {
+    lastConfirmNotifyBody = body;
+}
+
+export function setPendingHiddenConfirmNotify(payload: {title: string; body: string} | null): void {
+    pendingHiddenConfirmNotify = payload;
+}
+
+export function clearConfirmNotifyState(): void {
+    pendingHiddenConfirmNotify = null;
+    lastConfirmNotifyBody = null;
+    confirmSystemNotifyDelivered = false;
+    notifiedConfirmToolCallIds.clear();
+}
+
+function buildConfirmNotifyMessage(req: ToolConfirmRequest): string {
+    return `Agent 等待确认：${req.toolName}。请在对话中高亮区域点击「允许执行」或「拒绝」。`;
+}
+
+/** 在 requestConfirm 成立时立即调用（不依赖 DOM 渲染） */
+export function notifyToolConfirmRequired(req: ToolConfirmRequest): void {
+    if (notifiedConfirmToolCallIds.has(req.toolCallId)) {
+        return;
+    }
+    notifiedConfirmToolCallIds.add(req.toolCallId);
+    deliverConfirmNotification(buildConfirmNotifyMessage(req));
+}
+
+/** 前台 toast；隐藏时系统通知 */
+export function deliverConfirmNotification(message: string): void {
+    rememberConfirmNotifyBody(message);
+    const payload = {title: "Agent 等待确认", body: message};
+    const hidden = isWindowNotVisibleToUser();
+
+    if (hidden && isSiYuanDesktopClient()) {
+        setPendingHiddenConfirmNotify(payload);
+        void sendSiYuanDesktopNotification(payload).then((ok) => {
+            if (ok) {
+                markConfirmSystemNotifyDelivered();
+            }
+        });
+        return;
+    }
+
+    setPendingHiddenConfirmNotify(null);
+    resetConfirmSystemNotifyDelivered();
+    showConfirmToast?.(message);
+}
+
+export function markConfirmSystemNotifyDelivered(): void {
+    confirmSystemNotifyDelivered = true;
+    pendingHiddenConfirmNotify = null;
+}
+
+export function resetConfirmSystemNotifyDelivered(): void {
+    confirmSystemNotifyDelivered = false;
+}
+
+/** 首次隐藏发送失败时重试；或前台仅 toast、后隐藏时补发一次系统通知 */
+export async function flushPendingHiddenConfirmNotification(): Promise<boolean> {
+    if (!isWindowNotVisibleToUser() || !isSiYuanDesktopClient()) {
+        return false;
+    }
+    if (confirmSystemNotifyDelivered) {
+        return false;
+    }
+    if (!document.querySelector(".agent-msg-confirm")) {
+        pendingHiddenConfirmNotify = null;
+        return false;
+    }
+
+    const payload =
+        pendingHiddenConfirmNotify ??
+        (lastConfirmNotifyBody
+            ? {title: "Agent 等待确认", body: lastConfirmNotifyBody}
+            : null);
+    if (!payload) {
+        return false;
+    }
+
+    const ok = await sendSiYuanDesktopNotification(payload);
+    if (ok) {
+        markConfirmSystemNotifyDelivered();
+    }
+    return ok;
+}
+
+async function sendViaSiyuanPlatformUtils(title: string, body: string): Promise<boolean> {
+    const send = getPlatformUtilsSendNotification();
+    if (!send) {
+        return false;
+    }
+    const id = await send({title, body, delayInSeconds: 0});
+    return isSendNotificationOk(id);
 }
 
 export async function sendSiYuanDesktopNotification(options: {
     title: string;
     body: string;
-}): Promise<void> {
+}): Promise<boolean> {
     const title = options.title.trim();
     const body = options.body.trim();
     if (!title && !body) {
-        return;
+        return false;
     }
-    const send = platformUtils?.sendNotification;
-    if (send) {
-        const id = await send({title, body, delayInSeconds: 0});
-        if (id >= 0) {
-            if (isWindowVisibilityDebugEnabled()) {
-                console.info("[Agent] sendNotification ok", {id, title});
-            }
-            return;
-        }
-        console.warn("[Agent] platformUtils.sendNotification returned", id);
-    } else {
-        console.warn("[Agent] platformUtils.sendNotification unavailable, trying Notification API");
+    if (!isSiYuanDesktopClient()) {
+        return sendBrowserNotification(title, body);
     }
-    const ok = await sendBrowserNotification(title, body);
-    if (!ok) {
-        console.warn("[Agent] desktop notification failed (platformUtils + Notification API)");
+
+    if (await sendViaSiyuanPlatformUtils(title, body)) {
+        return true;
     }
+    if (sendNotificationViaElectronIpc(title, body)) {
+        return true;
+    }
+    return sendBrowserNotification(title, body);
 }
 
-/** 挂到 window，便于在思源开发者工具控制台手动调用 */
-export function installWindowVisibilityDebug(): void {
-    const w = window as Window & {
-        __agentDebugVisibility?: () => WindowVisibilityDiagnostics;
-    };
-    w.__agentDebugVisibility = () => logWindowVisibilityDiagnostics("manual");
-
-    if (!isWindowVisibilityDebugEnabled()) {
+function onWindowVisibilityChanged(): void {
+    if (!isWindowNotVisibleToUser()) {
         return;
     }
-    document.addEventListener("visibilitychange", () => {
-        logWindowVisibilityDiagnostics("visibilitychange");
-    });
-    console.info(
-        "[Agent] visibility debug on: localStorage.removeItem('%s') to disable",
-        VISIBILITY_DEBUG_STORAGE_KEY,
-    );
+    void flushPendingHiddenConfirmNotification();
+}
+
+export function installConfirmVisibilityListener(): void {
+    document.addEventListener("visibilitychange", onWindowVisibilityChanged);
 }

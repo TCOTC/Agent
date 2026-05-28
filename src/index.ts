@@ -6,7 +6,7 @@ import {normalizeSettings, STORAGE_KEY_SETTINGS} from "./settings/storage";
 import {attachPluginSettingPanel} from "./settings/settingPanel";
 import {STORAGE_KEY_SESSIONS} from "./core/constants";
 import {normalizeSessions} from "./session/storage";
-import {installWindowVisibilityDebug} from "./ui/notify/desktopNotify";
+import {installConfirmVisibilityListener} from "./ui/notify/desktopNotify";
 import {logger} from "./util";
 
 const DOCK_TYPE = "agent_dock";
@@ -75,7 +75,7 @@ export default class Agent extends Plugin {
     }
 
     onload() {
-        installWindowVisibilityDebug();
+        installConfirmVisibilityListener();
         this.addIcons(`<symbol id="iconAgent" viewBox="0 0 32 32">
 <path d="M16 4c-4.4 0-8 3.6-8 8 0 2.2 0.9 4.2 2.3 5.7L8 22l4.3-2.3c1.5 1.4 3.5 2.3 5.7 2.3 4.4 0 8-3.6 8-8s-3.6-8-8-8zm0 14c-3.3 0-6-2.7-6-6s2.7-6 6-6 6 2.7 6 6-2.7 6-6 6zm8 6h-2v2h2v4h2v-4h4v-2h-4v-2z"/>
 </symbol>`);
