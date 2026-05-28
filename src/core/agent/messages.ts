@@ -101,6 +101,11 @@ export function patchChatFromAgent(target: ChatMessage, source: AgentMessage): v
         target.role = "assistant";
         const nextContent = source.content ?? "";
         const prevContent = target.content ?? "";
+        const sourceAsst = source as AssistantAgentMessage;
+        const preserveEmptyOnAbort =
+            sourceAsst.stopReason === "aborted" &&
+            nextContent === "" &&
+            prevContent !== "";
         const preserveEmptyDuringTools =
             nextContent === "" && prevContent !== "" && source.tool_calls?.length && target._streaming;
         const ignoreStreamingShrink =
@@ -109,7 +114,7 @@ export function patchChatFromAgent(target: ChatMessage, source: AgentMessage): v
             nextContent !== "" &&
             nextContent.length < prevContent.length &&
             prevContent.startsWith(nextContent);
-        if (preserveEmptyDuringTools || ignoreStreamingShrink) {
+        if (preserveEmptyOnAbort || preserveEmptyDuringTools || ignoreStreamingShrink) {
             /* 保留已有正文，避免封存 prefix 失效引发 cacheReset 与 md2html 风暴 */
         } else {
             target.content = nextContent;
@@ -117,12 +122,16 @@ export function patchChatFromAgent(target: ChatMessage, source: AgentMessage): v
         if (source.reasoning_content !== undefined) {
             const nextReasoning = source.reasoning_content;
             const prevReasoning = target.reasoning_content ?? "";
+            const preserveReasoningOnAbort =
+                sourceAsst.stopReason === "aborted" &&
+                nextReasoning === "" &&
+                prevReasoning !== "";
             const ignoreReasoningShrink =
                 target._streaming &&
                 prevReasoning !== "" &&
                 nextReasoning.length < prevReasoning.length &&
                 prevReasoning.startsWith(nextReasoning);
-            if (!ignoreReasoningShrink) {
+            if (!preserveReasoningOnAbort && !ignoreReasoningShrink) {
                 target.reasoning_content = nextReasoning;
             }
         } else {

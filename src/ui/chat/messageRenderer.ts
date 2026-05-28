@@ -1,4 +1,5 @@
 import type {ChatMessage} from "../../agent/types";
+import {AGENT_ICON_IDS, agentIconHtml} from "../../icons/agentIcons";
 import type {LuteEngine} from "../../render/lute";
 import {forgetStreamMdCache} from "../../render/streamMdRender";
 import {syncAssistantContentDom, syncAssistantReasoningDom} from "../../render/streamingDom";
@@ -25,9 +26,7 @@ export function buildUserMessageRow(content: string): HTMLElement {
     row.innerHTML = `<textarea class="agent-msg__input" rows="2" spellcheck="false"></textarea>
 <div class="agent-msg__footer fn__flex">
   <button type="button" class="agent-msg__submit" data-user-resend title="发送" aria-label="发送">
-    <svg class="agent-msg__submit-icon" width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
-      <path fill="currentColor" d="M8 3.2 12.8 11H3.2L8 3.2z"/>
-    </svg>
+    ${agentIconHtml(AGENT_ICON_IDS.arrowUp, { size: 8, className: "agent-msg__submit-icon" })}
   </button>
 </div>`;
     const input = row.querySelector(".agent-msg__input") as HTMLTextAreaElement;

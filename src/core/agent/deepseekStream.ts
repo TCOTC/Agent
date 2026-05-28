@@ -65,8 +65,10 @@ export function createDeepSeekStreamFn(thinkingLevel: ThinkingLevel): StreamFn {
             let textStarted = false;
             let thinkStarted = false;
             let toolcallStarted = false;
+            let lastPartial: AssistantAgentMessage = {...base};
 
             const emitPartial = (partial: AssistantAgentMessage, event: AssistantMessageEvent) => {
+                lastPartial = partial;
                 stream.push(event);
             };
 
@@ -119,12 +121,17 @@ export function createDeepSeekStreamFn(thinkingLevel: ThinkingLevel): StreamFn {
 
             if (completion.ok === false) {
                 const {stopReason, errorMessage} = failureToStopReason(completion.failure);
-                const failed = {
-                    ...base,
-                    content: base.content ?? "",
+                const failed: AssistantAgentMessage = {
+                    ...lastPartial,
                     stopReason,
                     errorMessage,
-                } satisfies AssistantAgentMessage;
+                };
+                if (textStarted) {
+                    stream.push({type: "text_end", partial: {...failed}});
+                }
+                if (thinkStarted) {
+                    stream.push({type: "thinking_end", partial: {...failed}});
+                }
                 stream.push({type: "error", partial: failed, errorMessage});
                 stream.end(failed);
                 return;

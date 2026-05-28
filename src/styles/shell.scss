@@ -31,6 +31,7 @@
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     display: block;
 
     &.fn__flex-1 {
@@ -95,7 +96,9 @@
     color: var(--b3-theme-on-background);
   }
 
-  &[aria-expanded="true"] {
+  &[aria-expanded="true"],
+  &--active,
+  &[aria-pressed="true"] {
     background: var(--b3-theme-primary-lightest);
     color: var(--b3-theme-primary);
   }
@@ -104,6 +107,11 @@
     width: 24px;
     height: 24px;
     font-size: 13px;
+  }
+
+  svg {
+    display: block;
+    flex-shrink: 0;
   }
 }
 
@@ -137,6 +145,7 @@
 
 .agent-messages {
   padding: 12px 14px 16px;
+  padding-right: 4px;
 }
 
 .agent-empty {
@@ -287,8 +296,16 @@
 
   &__item-title {
     font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     max-width: 100%;
     line-height: 1.35;
+  }
+
+  &__pin {
+    flex-shrink: 0;
+    color: var(--b3-theme-primary);
   }
 
   &__item-meta {

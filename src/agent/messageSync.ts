@@ -43,12 +43,27 @@ export function syncChatMessagesFromAgent(
         return;
     }
 
-    for (const m of target) {
-        if (m.role === "assistant") {
-            delete m._streaming;
-            delete m._mdStreaming;
-            delete m._thinkingMdOpen;
+    for (let i = 0; i < target.length; i++) {
+        const m = target[i];
+        if (m.role !== "assistant") {
+            continue;
         }
+        const src = i < committed.length ? committed[i] : undefined;
+        const srcAsst =
+            src?.role === "assistant" ? (src as AssistantAgentMessage) : undefined;
+        // tool call 参数 JSON 流式阶段 streamingMessage 可能短暂为空，需保留 _streaming 以便 UI 增量刷新
+        const stillComposingToolArgs =
+            i === committed.length - 1 &&
+            !!srcAsst?.tool_calls?.length &&
+            !srcAsst.stopReason &&
+            !srcAsst._toolStatus;
+        if (stillComposingToolArgs) {
+            m._streaming = true;
+            continue;
+        }
+        delete m._streaming;
+        delete m._mdStreaming;
+        delete m._thinkingMdOpen;
     }
 
     if (target.length > committed.length) {

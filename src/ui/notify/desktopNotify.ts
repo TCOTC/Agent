@@ -126,7 +126,7 @@ function loadSiyuanModule(): unknown {
         }
     }
     try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
+         
         return require("siyuan");
     } catch {
         return undefined;

@@ -24,5 +24,6 @@ clone_if_missing siyuan-ai-assistant https://github.com/DUZSSY/siyuan-ai-assista
 clone_if_missing sy-f-misc https://github.com/frostime/sy-f-misc.git
 clone_if_missing pi https://github.com/earendil-works/pi.git
 clone_if_missing tiptap https://github.com/ueberdosis/tiptap.git
+clone_if_missing zed https://github.com/zed-industries/zed.git
 
 echo "done: refer/ ready for offline reading"

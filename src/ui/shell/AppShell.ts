@@ -2,7 +2,7 @@ import type Agent from "../../index";
 import {getActiveAgentSession, runAgentLoop} from "../../agent/agentLoop";
 import {syncChatMessagesFromAgent} from "../../agent/messageSync";
 import {AGENT_MODES, type AgentMode} from "../../agent/modes";
-import type {AuditEvent, ChatMessage, ToolDiffPreviewInfo} from "../../agent/types";
+import type {AuditEvent, ChatMessage, ToolConfirmRequest, ToolDiffPreviewInfo} from "../../agent/types";
 import {listDeepSeekModels} from "../../agent/deepseekClient";
 import {createFetchSyncKernelExecutor} from "../../agent/kernelExecutor";
 import {ActivityLogBuffer} from "../../core/activityLog";
@@ -10,6 +10,7 @@ import {STORAGE_KEY_ACTIVITY, STORAGE_KEY_SESSIONS, STORAGE_KEY_TOKEN_STATS} fro
 import {closeAllComposerDropdowns, mountComposerDropdown} from "../composer/composerDropdown";
 import {mountComposerEditor, type ComposerEditorHandle} from "../composer/composerEditor";
 import {agentBus, AgentEvents} from "../../core/eventBus";
+import {AGENT_ICON_IDS, agentIconHtml} from "../../icons/agentIcons";
 import {
     formatTokenBrief,
     getModelContextLimit,
@@ -63,7 +64,17 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     let destroyed = false;
     let renderSeq = 0;
     let streamRaf = 0;
-    let abortCtl: AbortController | null = null;
+    type SessionRunHandle = {
+        ctl: AbortController;
+        abortAgent: () => void;
+    };
+
+    /** 各会话独立的 Agent 运行（切换视图不中断其它会话） */
+    const sessionRuns = new Map<string, SessionRunHandle>();
+    /** 最近一次启动的会话 id（工具确认自动聚焦等） */
+    let runningSessionId: string | null = null;
+    /** 当前 getActiveAgentSession 对应的 messages 引用 */
+    let agentRunMessages: ChatMessage[] | null = null;
     let afterAbortAction: (() => void) | null = null;
     let railExpanded = false;
     const rowByMessage = new WeakMap<ChatMessage, HTMLElement>();
@@ -78,6 +89,68 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         return sessions.sessions.find((s) => s.id === sessions.activeId) ?? sessions.sessions[0];
     };
 
+    const getSessionById = (id: string): ChatSession | undefined =>
+        sessions.sessions.find((s) => s.id === id);
+
+    /** Agent 流式 / 确认状态应写入的 messages（运行中的会话，而非当前可见会话） */
+    const getAgentSyncMessages = (): ChatMessage[] => {
+        if (agentRunMessages) {
+            return agentRunMessages;
+        }
+        if (runningSessionId) {
+            const s = getSessionById(runningSessionId);
+            if (s) {
+                return s.messages;
+            }
+        }
+        return getActive().messages;
+    };
+
+    const isSessionRunning = (sessionId: string = sessions.activeId) => sessionRuns.has(sessionId);
+
+    const getSessionRunSignal = (sessionId?: string) =>
+        sessionRuns.get(sessionId ?? runningSessionId ?? "")?.ctl.signal;
+
+    const abortSessionRun = (sessionId: string) => {
+        const run = sessionRuns.get(sessionId);
+        if (!run) {
+            return;
+        }
+        run.ctl.abort();
+        run.abortAgent();
+        cancelPendingInlineActions();
+    };
+
+    const resumeStreamRenderIfNeeded = () => {
+        if (isSessionRunning(sessions.activeId)) {
+            scheduleStreamRender(sessions.activeId);
+        }
+    };
+
+    const syncAgentToChatMessages = () => {
+        const agentSession = getActiveAgentSession();
+        if (!agentSession) {
+            return;
+        }
+        syncChatMessagesFromAgent(
+            getAgentSyncMessages(),
+            agentSession.agent.state.messages,
+            agentSession.agent.state.streamingMessage,
+        );
+    };
+
+    /** 工具确认条在消息 DOM 上，需切回正在跑 agent 的会话才能看到 */
+    const focusRunningSessionForAgentUi = (): boolean => {
+        if (!runningSessionId || runningSessionId === sessions.activeId) {
+            return false;
+        }
+        switchToSession(runningSessionId);
+        renderSessionList();
+        updateSessionTitle();
+        updateContextRing();
+        return true;
+    };
+
     root.innerHTML = `<div class="agent-shell fn__flex">
   <div class="agent-main fn__flex-column fn__flex-1">
     <header class="agent-header fn__flex">
@@ -89,17 +162,13 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         </nav>
       </div>
       <div class="agent-header__actions fn__flex">
-        <button type="button" class="agent-icon-btn" data-new-session title="新对话 (Ctrl+N)" aria-label="新对话">+</button>
-        <button type="button" class="agent-icon-btn" data-rail-history title="对话历史" aria-label="对话历史">
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.5a6.5 6.5 0 1 0 6.5 6.5H8V1.5zm0 2.2v4.3h4.1A4.3 4.3 0 0 1 8 3.7z"/></svg>
-        </button>
-        <button type="button" class="agent-icon-btn" data-regenerate title="重新生成" aria-label="重新生成">↻</button>
-        <button type="button" class="agent-icon-btn" data-export-session title="导出对话" aria-label="导出对话">↓</button>
-        <button type="button" class="agent-icon-btn" data-pin-session title="置顶" aria-label="置顶">📌</button>
-        <button type="button" class="agent-icon-btn" data-open-settings title="设置" aria-label="设置">⚙</button>
-        <button type="button" class="agent-icon-btn" data-toggle-rail title="会话列表" aria-label="会话列表" aria-expanded="false">
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 3.5h12v1.2H2V3.5zm0 4.1h12v1.2H2V7.6zm0 4.1h8v1.2H2v-1.2z"/></svg>
-        </button>
+        <button type="button" class="agent-icon-btn" data-new-session title="新对话 (Ctrl+N)" aria-label="新对话">${agentIconHtml(AGENT_ICON_IDS.plus, { size: 14 })}</button>
+        <button type="button" class="agent-icon-btn" data-rail-history title="对话历史" aria-label="对话历史">${agentIconHtml(AGENT_ICON_IDS.history, { size: 14 })}</button>
+        <button type="button" class="agent-icon-btn" data-regenerate title="重新生成" aria-label="重新生成">${agentIconHtml(AGENT_ICON_IDS.refresh, { size: 14 })}</button>
+        <button type="button" class="agent-icon-btn" data-export-session title="导出对话" aria-label="导出对话">${agentIconHtml(AGENT_ICON_IDS.download, { size: 14 })}</button>
+        <button type="button" class="agent-icon-btn" data-pin-session title="置顶" aria-label="置顶" aria-pressed="false">${agentIconHtml(AGENT_ICON_IDS.pin, { size: 14 })}</button>
+        <button type="button" class="agent-icon-btn" data-open-settings title="设置" aria-label="设置">${agentIconHtml(AGENT_ICON_IDS.settings, { size: 14 })}</button>
+        <button type="button" class="agent-icon-btn" data-toggle-rail title="会话列表" aria-label="会话列表" aria-expanded="false">${agentIconHtml(AGENT_ICON_IDS.panelRight, { size: 14 })}</button>
       </div>
     </header>
     <div class="agent-main__body fn__flex-1" data-tab-chat>
@@ -112,7 +181,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
       <div class="agent-context-card fn__none" data-context-card aria-label="上下文明细">
         <header class="agent-context-card__head fn__flex">
           <span class="agent-context-card__title">上下文</span>
-          <button type="button" class="agent-context-card__close" data-context-close title="关闭" aria-label="关闭">×</button>
+          <button type="button" class="agent-context-card__close" data-context-close title="关闭" aria-label="关闭">${agentIconHtml(AGENT_ICON_IDS.x, { size: 14 })}</button>
         </header>
         <div class="agent-context-card__meta fn__flex">
           <span data-context-pct-label></span>
@@ -128,8 +197,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         </div>
         <div class="agent-composer__footer">
           <div class="agent-composer__footer-start fn__flex">
-            <div data-mode-dropdown></div>
-            <div data-model-dropdown></div>
+            <button type="button" data-mode-dropdown></button>
+            <button type="button" data-model-dropdown></button>
           </div>
           <div class="agent-composer__footer-end fn__flex">
             <button type="button" class="agent-context-ring" data-context-ring title="上下文占用" aria-label="上下文占用" aria-expanded="false">
@@ -140,12 +209,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
               <span class="agent-context-ring__pct" data-ring-pct>0</span>
             </button>
             <button type="button" class="agent-composer__submit" data-submit title="发送" aria-label="发送">
-              <svg class="agent-composer__submit-icon" data-submit-icon-send width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
-                <path fill="currentColor" d="M8 3.2 12.8 11H3.2L8 3.2z"/>
-              </svg>
-              <svg class="agent-composer__submit-icon fn__none" data-submit-icon-stop width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
-                <rect fill="currentColor" x="4.5" y="4.5" width="7" height="7" rx="1"/>
-              </svg>
+              ${agentIconHtml(AGENT_ICON_IDS.arrowUp, { size: 9, className: "agent-composer__submit-icon", attrs: { "data-submit-icon-send": "" } })}
+              ${agentIconHtml(AGENT_ICON_IDS.square, { size: 9, className: "agent-composer__submit-icon fn__none", attrs: { "data-submit-icon-stop": "" } })}
             </button>
           </div>
         </div>
@@ -155,8 +220,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
   <aside class="agent-rail agent-rail--collapsed fn__flex-column" data-rail aria-label="会话列表">
     <div class="agent-rail__head fn__flex">
       <span class="agent-rail__title">对话</span>
-      <button type="button" class="agent-icon-btn agent-icon-btn--sm" data-new-session-rail title="新对话" aria-label="新对话">+</button>
-      <button type="button" class="agent-icon-btn agent-icon-btn--sm" data-toggle-rail-close title="收起" aria-label="收起">×</button>
+      <button type="button" class="agent-icon-btn agent-icon-btn--sm" data-new-session-rail title="新对话" aria-label="新对话">${agentIconHtml(AGENT_ICON_IDS.plus, { size: 13 })}</button>
+      <button type="button" class="agent-icon-btn agent-icon-btn--sm" data-toggle-rail-close title="收起" aria-label="收起">${agentIconHtml(AGENT_ICON_IDS.x, { size: 13 })}</button>
     </div>
     <input class="agent-input agent-rail__search" data-session-search placeholder="搜索对话…" />
     <div class="agent-rail__list fn__flex-1" data-session-list></div>
@@ -171,8 +236,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const elSessionTitle = root.querySelector("[data-session-title]") as HTMLElement;
     const elSessionSearch = root.querySelector("[data-session-search]") as HTMLInputElement;
     const elComposerEditor = root.querySelector("[data-composer-editor]") as HTMLElement;
-    const elModeDropdown = root.querySelector("[data-mode-dropdown]") as HTMLElement;
-    const elModelDropdown = root.querySelector("[data-model-dropdown]") as HTMLElement;
+    const elModeDropdown = root.querySelector("[data-mode-dropdown]") as HTMLButtonElement;
+    const elModelDropdown = root.querySelector("[data-model-dropdown]") as HTMLButtonElement;
     const elRingFill = root.querySelector("[data-ring-fill]") as SVGCircleElement;
     const elRingPct = root.querySelector("[data-ring-pct]") as HTMLElement;
     const elContextCard = root.querySelector("[data-context-card]") as HTMLElement;
@@ -185,6 +250,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const elSubmitIconSend = root.querySelector("[data-submit-icon-send]") as SVGElement;
     const elSubmitIconStop = root.querySelector("[data-submit-icon-stop]") as SVGElement;
     const btnToggleRail = root.querySelector("[data-toggle-rail]") as HTMLButtonElement;
+    const btnPinSession = root.querySelector("[data-pin-session]") as HTMLButtonElement;
     const RING_CIRC = 2 * Math.PI * 11.5;
     let modelOptionIds: string[] = [];
 
@@ -213,6 +279,12 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         elSubmitIconStop.classList.toggle("fn__none", !running);
     };
 
+    const isActiveSessionStreaming = () => isSessionRunning(sessions.activeId);
+
+    const syncSubmitRunning = () => {
+        setSubmitRunning(isActiveSessionStreaming());
+    };
+
     const persistSessions = () => {
         plugin.data[STORAGE_KEY_SESSIONS] = sessions;
         void plugin.saveData(STORAGE_KEY_SESSIONS, sessions);
@@ -232,6 +304,11 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const s = getActive();
         elSessionTitle.textContent = s.title || "新对话";
         elSessionTitle.title = s.title;
+        btnPinSession.classList.toggle("agent-icon-btn--active", s.pinned);
+        btnPinSession.setAttribute("aria-pressed", String(s.pinned));
+        const pinLabel = s.pinned ? "取消置顶" : "置顶";
+        btnPinSession.title = pinLabel;
+        btnPinSession.setAttribute("aria-label", pinLabel);
     };
 
     const estimateMessageTokens = (msgs: ChatMessage[]): number => {
@@ -454,32 +531,36 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             btn.className = "agent-rail__item" + (s.id === sessions.activeId ? " agent-rail__item--active" : "");
             btn.dataset.id = s.id;
             const titleHtml = highlightFilter(esc(s.title), sessionFilter);
-            btn.innerHTML = `<span class="agent-rail__item-title fn__ellipsis">${s.pinned ? "📌 " : ""}${titleHtml}</span>
+            btn.innerHTML = `<span class="agent-rail__item-title fn__ellipsis">${s.pinned ? `${agentIconHtml(AGENT_ICON_IDS.pin, { size: 12, className: "agent-rail__pin" })} ` : ""}${titleHtml}</span>
 <span class="agent-rail__item-meta">${AGENT_MODES.find((m) => m.id === s.mode)?.label ?? "智能体"}</span>`;
             btn.addEventListener("click", () => {
-                if (s.id === sessions.activeId) {
-                    return;
-                }
-                flushComposerDraft();
-                sessions.activeId = s.id;
+                switchToSession(s.id);
                 persistSessions();
                 renderSessionList();
                 modeDropdown.refresh();
                 updateSessionTitle();
-                restoreComposerDraft();
                 void renderMessages();
+                resumeStreamRenderIfNeeded();
                 updateContextRing();
             });
             btn.addEventListener("contextmenu", (ev) => {
                 ev.preventDefault();
                 if (confirm("删除此对话？")) {
+                    const deletingActive = sessions.activeId === s.id;
+                    if (deletingActive) {
+                        flushComposerDraft();
+                    }
                     sessions.sessions = sessions.sessions.filter((x) => x.id !== s.id);
                     if (!sessions.sessions.length) {
                         const n = createSession();
                         sessions.sessions.push(n);
                         sessions.activeId = n.id;
-                    } else if (sessions.activeId === s.id) {
+                    } else if (deletingActive) {
                         sessions.activeId = sessions.sessions[0].id;
+                    }
+                    if (deletingActive) {
+                        restoreComposerDraft();
+                        syncSubmitRunning();
                     }
                     persistSessions();
                     renderSessionList();
@@ -491,19 +572,24 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
     };
 
-    const scheduleStreamRender = () => {
+    const scheduleStreamRender = (originSessionId?: string) => {
         if (destroyed) {
             return;
         }
         if (streamRaf) {
             cancelAnimationFrame(streamRaf);
         }
+        const streamSessionId = originSessionId ?? runningSessionId ?? undefined;
         streamRaf = requestAnimationFrame(() => {
             streamRaf = 0;
+            if (streamSessionId && streamSessionId !== sessions.activeId) {
+                persistSessions();
+                return;
+            }
             const msgs = getActive().messages;
             const visibleMsgs = msgs.filter((m) => m.role !== "tool");
             const tail = visibleMsgs[visibleMsgs.length - 1];
-            const streamingActive = abortCtl !== null;
+            const streamingActive = isActiveSessionStreaming();
             const toolArgsComposing = tail?._streaming &&
                 !!tail.tool_calls?.length &&
                 !(tail._toolStatus && Object.keys(tail._toolStatus).length > 0);
@@ -533,20 +619,22 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     };
 
     const refreshInlineActionUi = () => {
-        const session = getActiveAgentSession();
-        if (session) {
-            syncChatMessagesFromAgent(
-                getActive().messages,
-                session.agent.state.messages,
-                session.agent.state.streamingMessage,
-            );
-        }
+        syncAgentToChatMessages();
         scheduleStreamRender();
+    };
+
+    const handleToolConfirmRequired = (req: ToolConfirmRequest) => {
+        syncAgentToChatMessages();
+        if (focusRunningSessionForAgentUi()) {
+            persistSessions();
+        }
+        void renderMessages();
+        notifyToolConfirmRequired(req);
     };
 
     const attachDiffToMessages = (toolCallId: string, html: string, title: string) => {
         const info: ToolDiffPreviewInfo = {html, title, status: "pending"};
-        const chatAsst = findLatestAssistantMessage(getActive().messages);
+        const chatAsst = findLatestAssistantMessage(getAgentSyncMessages());
         const agentAsst = findLatestAssistantMessage(getActiveAgentSession()?.agent.state.messages ?? []);
         for (const asst of [chatAsst, agentAsst]) {
             if (asst?.role === "assistant") {
@@ -561,13 +649,13 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     const inlineRequestConfirm = createInlineToolConfirm(
         refreshInlineActionUi,
-        () => abortCtl?.signal,
-        notifyToolConfirmRequired,
+        () => getSessionRunSignal(),
+        handleToolConfirmRequired,
     );
     const inlineShowDiffPreview = createInlineDiffPreview(
         refreshInlineActionUi,
         attachDiffToMessages,
-        () => abortCtl?.signal,
+        () => getSessionRunSignal(),
     );
 
     bindAssistantConfirmNotify((_message, anchorEl) => {
@@ -578,8 +666,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     bindInlineToolActionHandlers({
         onConfirm: (toolCallId, approved) => {
-            const aborted = abortCtl?.signal.aborted === true;
-            const chatAsst = findLatestAssistantMessage(getActive().messages);
+            const aborted = getSessionRunSignal()?.aborted === true;
+            const chatAsst = findLatestAssistantMessage(getAgentSyncMessages());
             const agentAsst = findLatestAssistantMessage(getActiveAgentSession()?.agent.state.messages ?? []);
             for (const asst of [chatAsst, agentAsst]) {
                 if (!asst?._toolConfirm?.[toolCallId]) {
@@ -603,7 +691,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             refreshInlineActionUi();
         },
         onDiff: (toolCallId, approved) => {
-            const chatAsst = findLatestAssistantMessage(getActive().messages);
+            const chatAsst = findLatestAssistantMessage(getAgentSyncMessages());
             const agentAsst = findLatestAssistantMessage(getActiveAgentSession()?.agent.state.messages ?? []);
             for (const asst of [chatAsst, agentAsst]) {
                 if (!asst?._toolDiff?.[toolCallId]) {
@@ -669,7 +757,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 continue;
             }
 
-            const streamingActive = abortCtl !== null;
+            const streamingActive = isActiveSessionStreaming();
             const isStreamingTail =
                 streamingActive && i === visibleMsgs.length - 1 && m.role === "assistant";
 
@@ -746,7 +834,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const settings = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
         const s = createSession("新对话", settings.defaultMode);
         sessions.sessions.unshift(s);
-        sessions.activeId = s.id;
+        switchToSession(s.id);
         persistSessions();
         renderSessionList();
         modeDropdown.refresh();
@@ -790,11 +878,9 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             return;
         }
         const doResend = () => void runSend({text, truncateFrom: m});
-        if (abortCtl) {
+        if (isActiveSessionStreaming()) {
             afterAbortAction = doResend;
-            abortCtl.abort();
-            getActiveAgentSession()?.abort();
-            cancelPendingInlineActions();
+            abortSessionRun(sessions.activeId);
             return;
         }
         doResend();
@@ -842,7 +928,18 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         composerEditor.setDocumentJSON(session.composerDraft ?? null);
     };
 
-    let composerEditor: ComposerEditorHandle = mountComposerEditor({
+    const switchToSession = (id: string) => {
+        if (id === sessions.activeId) {
+            return;
+        }
+        flushComposerDraft();
+        sessions.activeId = id;
+        restoreComposerDraft();
+        syncSubmitRunning();
+        resumeStreamRenderIfNeeded();
+    };
+
+    const composerEditor: ComposerEditorHandle = mountComposerEditor({
         editorHost: elComposerEditor,
         app: plugin.app,
         kernel,
@@ -873,12 +970,24 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
 
         const sess = getActive();
-        abortCtl?.abort();
-        abortCtl = new AbortController();
-        setSubmitRunning(true);
+        const sendSessionId = sess.id;
+        const prevRun = sessionRuns.get(sendSessionId);
+        prevRun?.ctl.abort();
+        prevRun?.abortAgent();
+        const runCtl = new AbortController();
+        let sessionAbort: (() => void) | null = null;
+        sessionRuns.set(sendSessionId, {
+            ctl: runCtl,
+            abortAgent: () => sessionAbort?.(),
+        });
+        const runSignal = runCtl.signal;
+        runningSessionId = sendSessionId;
+        agentRunMessages = sess.messages;
+        syncSubmitRunning();
 
+        let outcome: Awaited<ReturnType<typeof runAgentLoop>> | undefined;
         try {
-            const outcome = await runAgentLoop({
+            outcome = await runAgentLoop({
                 plugin,
                 mode: sess.mode,
                 llm: {
@@ -889,37 +998,53 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 },
                 messages: sess.messages,
                 userText: text,
-                signal: abortCtl.signal,
+                signal: runSignal,
                 onAudit: pushAudit,
-                onStreamDelta: scheduleStreamRender,
+                onStreamDelta: () => scheduleStreamRender(sendSessionId),
                 onMessagesChanged: () => {
-                    scheduleStreamRender();
-                    updateContextRing();
+                    scheduleStreamRender(sendSessionId);
+                    if (sendSessionId === sessions.activeId) {
+                        updateContextRing();
+                    }
                 },
                 customInstructions: [settings.customInstructions, sess.customInstructions].filter(Boolean).join("\n"),
                 worksetNotebookIds: settings.worksetNotebookIds,
                 riskAutoApproveMax: settings.riskAutoApproveMax,
                 requestConfirm: inlineRequestConfirm,
                 showDiffPreview: inlineShowDiffPreview,
+                onRunReady: (handles) => {
+                    sessionAbort = handles.abort;
+                },
             });
             sess.updatedAt = new Date().toISOString();
             sess.title = deriveSessionTitle(sess.messages);
             persistSessions();
             renderSessionList();
             updateSessionTitle();
-            if (outcome.kind === "stopped") {
+            const showRunToast = sendSessionId === sessions.activeId && !runSignal.aborted;
+            if (showRunToast && outcome.kind === "stopped") {
                 const r = outcome.reason;
                 if (r.kind !== "aborted") {
                     const detail = r.kind === "http_error" ? `HTTP ${r.status}` : r.kind;
                     plugin.showPluginMessage(`Agent 中断：${detail}`);
                 }
-            } else if (outcome.kind === "unexpected_error") {
+            } else if (showRunToast && outcome.kind === "unexpected_error") {
                 plugin.showPluginMessage(outcome.message);
             }
         } finally {
-            setSubmitRunning(false);
-            abortCtl = null;
-            void renderMessages();
+            sessionRuns.delete(sendSessionId);
+            if (agentRunMessages === sess.messages) {
+                agentRunMessages = null;
+            }
+            if (runningSessionId === sendSessionId) {
+                runningSessionId = sessionRuns.size > 0
+                    ? [...sessionRuns.keys()][sessionRuns.size - 1]
+                    : null;
+            }
+            syncSubmitRunning();
+            if (sendSessionId === sessions.activeId) {
+                void renderMessages();
+            }
             if (afterAbortAction) {
                 const fn = afterAbortAction;
                 afterAbortAction = null;
@@ -975,11 +1100,9 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     });
 
     root.querySelector("[data-regenerate]")?.addEventListener("click", () => {
-        if (abortCtl) {
+        if (isActiveSessionStreaming()) {
             afterAbortAction = () => performRegenerate();
-            abortCtl.abort();
-            getActiveAgentSession()?.abort();
-            cancelPendingInlineActions();
+            abortSessionRun(sessions.activeId);
             return;
         }
         performRegenerate();
@@ -1033,6 +1156,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         s.pinned = !s.pinned;
         persistSessions();
         renderSessionList();
+        updateSessionTitle();
     });
 
     root.querySelector("[data-open-settings]")?.addEventListener("click", () => plugin.openSetting());
@@ -1073,10 +1197,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     root.addEventListener("click", onShellClick);
 
     btnSubmit.addEventListener("click", () => {
-        if (abortCtl) {
-            abortCtl.abort();
-            getActiveAgentSession()?.abort();
-            cancelPendingInlineActions();
+        if (isActiveSessionStreaming()) {
+            abortSessionRun(sessions.activeId);
             return;
         }
         void runSend();
@@ -1118,7 +1240,12 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         bindAssistantConfirmNotify(undefined);
         bindInlineToolActionHandlers(null);
         cancelPendingInlineActions();
-        abortCtl?.abort();
+        for (const run of sessionRuns.values()) {
+            run.ctl.abort();
+            run.abortAgent();
+        }
+        sessionRuns.clear();
+        getActiveAgentSession()?.abort();
         modeDropdown.destroy();
         modelDropdown.destroy();
         flushComposerDraft();

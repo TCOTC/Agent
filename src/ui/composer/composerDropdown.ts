@@ -53,7 +53,7 @@ function placeMenuAboveTrigger(menuEl: HTMLElement, anchor: DOMRect): void {
 
 /** Composer 底部无边框下拉（模式 / 模型等，使用思源 Menu） */
 export function mountComposerDropdown<T extends string>(opts: {
-    host: HTMLElement;
+    host: HTMLButtonElement;
     menuId: string;
     ariaLabel: string;
     getValue: () => T;
@@ -64,12 +64,9 @@ export function mountComposerDropdown<T extends string>(opts: {
     onOpen?: () => void;
     onClose?: () => void;
 }): ComposerDropdownHandle<T> {
-    const host = opts.host;
-    host.classList.add("agent-dd");
-
-    const trigger = document.createElement("button");
+    const trigger = opts.host;
     trigger.type = "button";
-    trigger.className = "agent-dd__trigger";
+    trigger.classList.add("agent-dd");
     trigger.setAttribute("aria-haspopup", "listbox");
     trigger.setAttribute("aria-expanded", "false");
     trigger.setAttribute("aria-label", opts.ariaLabel);
@@ -77,7 +74,6 @@ export function mountComposerDropdown<T extends string>(opts: {
     const labelEl = document.createElement("span");
     labelEl.className = "agent-dd__label";
     trigger.append(labelEl);
-    host.append(trigger);
 
     let open = false;
     let activeMenu: Menu | null = null;
@@ -175,8 +171,11 @@ export function mountComposerDropdown<T extends string>(opts: {
     const destroy = () => {
         dropdownClosers.delete(close);
         close();
-        host.replaceChildren();
-        host.classList.remove("agent-dd");
+        trigger.replaceChildren();
+        trigger.classList.remove("agent-dd");
+        trigger.removeAttribute("aria-haspopup");
+        trigger.removeAttribute("aria-expanded");
+        trigger.removeAttribute("aria-label");
     };
 
     syncTriggerLabel();

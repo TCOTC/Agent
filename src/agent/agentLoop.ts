@@ -28,6 +28,8 @@ export interface RunAgentLoopParams {
     riskAutoApproveMax?: number;
     requestConfirm: (req: ToolConfirmRequest) => Promise<boolean>;
     showDiffPreview?: (html: string, title: string, toolCallId: string) => Promise<boolean>;
+    /** createAgentSession 完成后回调，供 UI 按会话 id 绑定独立 abort */
+    onRunReady?: (handles: {abort: () => void}) => void;
 }
 
 export type RunAgentLoopOutcome =
@@ -95,6 +97,7 @@ function mapOutcome(outcome: AgentRunOutcome): RunAgentLoopOutcome {
 }
 
 let activeAgentSession: ReturnType<typeof createAgentSession> | null = null;
+let activeAgentSessionDepth = 0;
 
 /** 当前运行中的 Agent 会话（供会话内确认 UI 写回状态） */
 export function getActiveAgentSession(): typeof activeAgentSession {
@@ -164,7 +167,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
             },
         });
 
+        p.onRunReady?.({abort: () => session.abort()});
+
         activeAgentSession = session;
+        activeAgentSessionDepth++;
         try {
             const outcome = await session.prompt(p.userText, p.signal);
 
@@ -172,7 +178,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
 
             return mapOutcome(outcome);
         } finally {
-            activeAgentSession = null;
+            activeAgentSessionDepth = Math.max(0, activeAgentSessionDepth - 1);
+            if (activeAgentSessionDepth === 0) {
+                activeAgentSession = null;
+            }
         }
     } catch (e) {
         return {kind: "unexpected_error", message: e instanceof Error ? e.message : String(e)};

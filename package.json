@@ -44,6 +44,7 @@
     "@tiptap/extension-text": "^3.23.6",
     "@tiptap/extensions": "^3.23.6",
     "@tiptap/pm": "^3.23.6",
-    "@tiptap/suggestion": "^3.23.6"
+    "@tiptap/suggestion": "^3.23.6",
+    "lucide": "^1.17.0"
   }
 }
