@@ -15,6 +15,8 @@ export interface ChatSession {
     /** 最近一次 API 请求的 prompt_tokens，对应当前上下文体积 */
     lastContextTokens?: number;
     mode: AgentMode;
+    /** 本会话使用的模型；未设置时回退到全局 settings.model */
+    model?: string;
     pinned: boolean;
     customInstructions: string;
     /** 当前会话 Composer 输入草稿，随 sessions.json 持久化 */

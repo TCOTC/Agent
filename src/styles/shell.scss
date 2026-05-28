@@ -292,6 +292,11 @@
         font-weight: 600;
       }
     }
+
+    &--running .agent-rail__item-meta {
+      opacity: 0.85;
+      color: var(--b3-theme-primary);
+    }
   }
 
   &__item-title {

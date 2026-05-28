@@ -1,6 +1,5 @@
 import type Agent from "../../index";
 import {getActiveAgentSession, runAgentLoop} from "../../agent/agentLoop";
-import {syncChatMessagesFromAgent} from "../../agent/messageSync";
 import {AGENT_MODES, type AgentMode} from "../../agent/modes";
 import type {AuditEvent, ChatMessage, ToolConfirmRequest, ToolDiffPreviewInfo} from "../../agent/types";
 import {listDeepSeekModels} from "../../agent/deepseekClient";
@@ -65,16 +64,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     let renderSeq = 0;
     let streamRaf = 0;
     type SessionRunHandle = {
+        sessionId: string;
+        messages: ChatMessage[];
         ctl: AbortController;
         abortAgent: () => void;
     };
 
     /** 各会话独立的 Agent 运行（切换视图不中断其它会话） */
     const sessionRuns = new Map<string, SessionRunHandle>();
-    /** 最近一次启动的会话 id（工具确认自动聚焦等） */
-    let runningSessionId: string | null = null;
-    /** 当前 getActiveAgentSession 对应的 messages 引用 */
-    let agentRunMessages: ChatMessage[] | null = null;
     let afterAbortAction: (() => void) | null = null;
     let railExpanded = false;
     const rowByMessage = new WeakMap<ChatMessage, HTMLElement>();
@@ -92,24 +89,21 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const getSessionById = (id: string): ChatSession | undefined =>
         sessions.sessions.find((s) => s.id === id);
 
-    /** Agent 流式 / 确认状态应写入的 messages（运行中的会话，而非当前可见会话） */
-    const getAgentSyncMessages = (): ChatMessage[] => {
-        if (agentRunMessages) {
-            return agentRunMessages;
+    /** 指定会话运行中的 messages；缺省为当前可见会话 */
+    const getAgentSyncMessages = (sessionId?: string): ChatMessage[] => {
+        const id = sessionId ?? sessions.activeId;
+        const run = sessionRuns.get(id);
+        if (run) {
+            return run.messages;
         }
-        if (runningSessionId) {
-            const s = getSessionById(runningSessionId);
-            if (s) {
-                return s.messages;
-            }
-        }
-        return getActive().messages;
+        const s = getSessionById(id);
+        return s?.messages ?? getActive().messages;
     };
 
     const isSessionRunning = (sessionId: string = sessions.activeId) => sessionRuns.has(sessionId);
 
     const getSessionRunSignal = (sessionId?: string) =>
-        sessionRuns.get(sessionId ?? runningSessionId ?? "")?.ctl.signal;
+        sessionRuns.get(sessionId ?? sessions.activeId)?.ctl.signal;
 
     const abortSessionRun = (sessionId: string) => {
         const run = sessionRuns.get(sessionId);
@@ -127,27 +121,16 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
     };
 
-    const syncAgentToChatMessages = () => {
-        const agentSession = getActiveAgentSession();
-        if (!agentSession) {
-            return;
-        }
-        syncChatMessagesFromAgent(
-            getAgentSyncMessages(),
-            agentSession.agent.state.messages,
-            agentSession.agent.state.streamingMessage,
-        );
-    };
-
     /** 工具确认条在消息 DOM 上，需切回正在跑 agent 的会话才能看到 */
-    const focusRunningSessionForAgentUi = (): boolean => {
-        if (!runningSessionId || runningSessionId === sessions.activeId) {
+    const focusRunningSessionForAgentUi = (sessionId: string): boolean => {
+        if (sessionId === sessions.activeId) {
             return false;
         }
-        switchToSession(runningSessionId);
+        switchToSession(sessionId);
         renderSessionList();
         updateSessionTitle();
         updateContextRing();
+        modelDropdown.refresh();
         return true;
     };
 
@@ -256,10 +239,16 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     const getSettings = () => normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
 
-    const getSelectedModel = () => {
-        const s = getSettings();
-        return s.model || modelOptionIds[0] || "";
+    const getSessionModel = (sess: ChatSession): string => {
+        const settings = getSettings();
+        const fromSession = sess.model?.trim();
+        if (fromSession) {
+            return fromSession;
+        }
+        return settings.model || modelOptionIds[0] || "";
     };
+
+    const getActiveSessionModel = () => getSessionModel(getActive());
 
     const isThinkingEnabled = () => getSettings().thinkingEnabled !== false;
 
@@ -338,7 +327,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const s = getActive();
         const u = s.tokenUsage;
         const settings = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
-        const model = getSelectedModel() || settings.model;
+        const model = getActiveSessionModel() || settings.model;
         const contextLimit = getModelContextLimit(model, settings.modelContextLimits);
         const contextTokens = s.lastContextTokens
             ?? (u.promptTokens > 0 ? u.promptTokens : estimateMessageTokens(s.messages));
@@ -411,14 +400,15 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         onOpen: () => {
             closeContextCard();
         },
-        getValue: () => getSelectedModel(),
+        getValue: () => getActiveSessionModel(),
         getOptions: () => {
-            const cur = getSelectedModel();
+            const cur = getActiveSessionModel();
             const ids = modelOptionIds.length ? modelOptionIds : (cur ? [cur] : []);
             return ids.map((id) => ({value: id, label: id}));
         },
         onChange: (id) => {
-            persistSettings({model: id});
+            getActive().model = id;
+            persistSessions();
             updateContextRing();
             modelDropdown.refresh();
         },
@@ -457,10 +447,11 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         if (modelOptionIds.length < 2) {
             return;
         }
-        const cur = getSelectedModel();
+        const cur = getActiveSessionModel();
         const i = modelOptionIds.indexOf(cur);
         const next = modelOptionIds[(i + 1) % modelOptionIds.length];
-        persistSettings({model: next});
+        getActive().model = next;
+        persistSessions();
         updateContextRing();
         modelDropdown.refresh();
     };
@@ -528,16 +519,23 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         for (const s of list) {
             const btn = document.createElement("button");
             btn.type = "button";
-            btn.className = "agent-rail__item" + (s.id === sessions.activeId ? " agent-rail__item--active" : "");
+            const running = isSessionRunning(s.id);
+            btn.className =
+                "agent-rail__item" +
+                (s.id === sessions.activeId ? " agent-rail__item--active" : "") +
+                (running ? " agent-rail__item--running" : "");
             btn.dataset.id = s.id;
             const titleHtml = highlightFilter(esc(s.title), sessionFilter);
+            const modeLabel = AGENT_MODES.find((m) => m.id === s.mode)?.label ?? "智能体";
+            const metaSuffix = running ? " · 运行中" : "";
             btn.innerHTML = `<span class="agent-rail__item-title fn__ellipsis">${s.pinned ? `${agentIconHtml(AGENT_ICON_IDS.pin, { size: 12, className: "agent-rail__pin" })} ` : ""}${titleHtml}</span>
-<span class="agent-rail__item-meta">${AGENT_MODES.find((m) => m.id === s.mode)?.label ?? "智能体"}</span>`;
+<span class="agent-rail__item-meta">${modeLabel}${metaSuffix}</span>`;
             btn.addEventListener("click", () => {
                 switchToSession(s.id);
                 persistSessions();
                 renderSessionList();
                 modeDropdown.refresh();
+                modelDropdown.refresh();
                 updateSessionTitle();
                 void renderMessages();
                 resumeStreamRenderIfNeeded();
@@ -547,12 +545,15 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 ev.preventDefault();
                 if (confirm("删除此对话？")) {
                     const deletingActive = sessions.activeId === s.id;
+                    abortSessionRun(s.id);
+                    sessionRuns.delete(s.id);
                     if (deletingActive) {
                         flushComposerDraft();
                     }
                     sessions.sessions = sessions.sessions.filter((x) => x.id !== s.id);
                     if (!sessions.sessions.length) {
-                        const n = createSession();
+                        const settings = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
+                        const n = createSession("新对话", settings.defaultMode, settings.model);
                         sessions.sessions.push(n);
                         sessions.activeId = n.id;
                     } else if (deletingActive) {
@@ -579,7 +580,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         if (streamRaf) {
             cancelAnimationFrame(streamRaf);
         }
-        const streamSessionId = originSessionId ?? runningSessionId ?? undefined;
+        const streamSessionId = originSessionId;
         streamRaf = requestAnimationFrame(() => {
             streamRaf = 0;
             if (streamSessionId && streamSessionId !== sessions.activeId) {
@@ -618,45 +619,29 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         });
     };
 
-    const refreshInlineActionUi = () => {
-        syncAgentToChatMessages();
-        scheduleStreamRender();
+    const refreshInlineActionUi = (sessionId?: string) => {
+        scheduleStreamRender(sessionId ?? sessions.activeId);
     };
 
-    const handleToolConfirmRequired = (req: ToolConfirmRequest) => {
-        syncAgentToChatMessages();
-        if (focusRunningSessionForAgentUi()) {
+    const handleToolConfirmRequired = (sessionId: string, req: ToolConfirmRequest) => {
+        if (focusRunningSessionForAgentUi(sessionId)) {
             persistSessions();
         }
         void renderMessages();
         notifyToolConfirmRequired(req);
     };
 
-    const attachDiffToMessages = (toolCallId: string, html: string, title: string) => {
+    const attachDiffToMessages = (sessionId: string, toolCallId: string, html: string, title: string) => {
         const info: ToolDiffPreviewInfo = {html, title, status: "pending"};
-        const chatAsst = findLatestAssistantMessage(getAgentSyncMessages());
-        const agentAsst = findLatestAssistantMessage(getActiveAgentSession()?.agent.state.messages ?? []);
-        for (const asst of [chatAsst, agentAsst]) {
-            if (asst?.role === "assistant") {
-                asst._toolDiff = {...(asst._toolDiff ?? {}), [toolCallId]: info};
-            }
+        const chatAsst = findLatestAssistantMessage(getAgentSyncMessages(sessionId));
+        if (chatAsst?.role === "assistant") {
+            chatAsst._toolDiff = {...(chatAsst._toolDiff ?? {}), [toolCallId]: info};
         }
     };
 
     registerConfirmToastHandler((text) => {
         plugin.showPluginMessage(text, 10_000, "info");
     });
-
-    const inlineRequestConfirm = createInlineToolConfirm(
-        refreshInlineActionUi,
-        () => getSessionRunSignal(),
-        handleToolConfirmRequired,
-    );
-    const inlineShowDiffPreview = createInlineDiffPreview(
-        refreshInlineActionUi,
-        attachDiffToMessages,
-        () => getSessionRunSignal(),
-    );
 
     bindAssistantConfirmNotify((_message, anchorEl) => {
         if (!isWindowNotVisibleToUser()) {
@@ -666,46 +651,42 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     bindInlineToolActionHandlers({
         onConfirm: (toolCallId, approved) => {
-            const aborted = getSessionRunSignal()?.aborted === true;
-            const chatAsst = findLatestAssistantMessage(getAgentSyncMessages());
-            const agentAsst = findLatestAssistantMessage(getActiveAgentSession()?.agent.state.messages ?? []);
-            for (const asst of [chatAsst, agentAsst]) {
-                if (!asst?._toolConfirm?.[toolCallId]) {
-                    continue;
-                }
-                if (approved) {
-                    const next = {...asst._toolConfirm};
-                    delete next[toolCallId];
-                    asst._toolConfirm = Object.keys(next).length ? next : undefined;
-                } else if (aborted) {
-                    const next = {...asst._toolConfirm};
-                    delete next[toolCallId];
-                    asst._toolConfirm = Object.keys(next).length ? next : undefined;
-                } else {
-                    asst._toolConfirm[toolCallId] = {
-                        ...asst._toolConfirm[toolCallId],
-                        status: "rejected",
-                    };
-                }
+            const sessionId = sessions.activeId;
+            const aborted = getSessionRunSignal(sessionId)?.aborted === true;
+            const chatAsst = findLatestAssistantMessage(getAgentSyncMessages(sessionId));
+            if (!chatAsst?._toolConfirm?.[toolCallId]) {
+                return;
             }
-            refreshInlineActionUi();
+            if (approved) {
+                const next = {...chatAsst._toolConfirm};
+                delete next[toolCallId];
+                chatAsst._toolConfirm = Object.keys(next).length ? next : undefined;
+            } else if (aborted) {
+                const next = {...chatAsst._toolConfirm};
+                delete next[toolCallId];
+                chatAsst._toolConfirm = Object.keys(next).length ? next : undefined;
+            } else {
+                chatAsst._toolConfirm[toolCallId] = {
+                    ...chatAsst._toolConfirm[toolCallId],
+                    status: "rejected",
+                };
+            }
+            refreshInlineActionUi(sessionId);
         },
         onDiff: (toolCallId, approved) => {
-            const chatAsst = findLatestAssistantMessage(getAgentSyncMessages());
-            const agentAsst = findLatestAssistantMessage(getActiveAgentSession()?.agent.state.messages ?? []);
-            for (const asst of [chatAsst, agentAsst]) {
-                if (!asst?._toolDiff?.[toolCallId]) {
-                    continue;
-                }
-                if (approved) {
-                    const next = {...asst._toolDiff};
-                    delete next[toolCallId];
-                    asst._toolDiff = Object.keys(next).length ? next : undefined;
-                } else {
-                    asst._toolDiff[toolCallId] = {...asst._toolDiff[toolCallId], status: "rejected"};
-                }
+            const sessionId = sessions.activeId;
+            const chatAsst = findLatestAssistantMessage(getAgentSyncMessages(sessionId));
+            if (!chatAsst?._toolDiff?.[toolCallId]) {
+                return;
             }
-            refreshInlineActionUi();
+            if (approved) {
+                const next = {...chatAsst._toolDiff};
+                delete next[toolCallId];
+                chatAsst._toolDiff = Object.keys(next).length ? next : undefined;
+            } else {
+                chatAsst._toolDiff[toolCallId] = {...chatAsst._toolDiff[toolCallId], status: "rejected"};
+            }
+            refreshInlineActionUi(sessionId);
         },
     });
 
@@ -832,7 +813,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     const createNewSession = () => {
         const settings = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
-        const s = createSession("新对话", settings.defaultMode);
+        const s = createSession("新对话", settings.defaultMode, settings.model);
         sessions.sessions.unshift(s);
         switchToSession(s.id);
         persistSessions();
@@ -937,6 +918,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         restoreComposerDraft();
         syncSubmitRunning();
         resumeStreamRenderIfNeeded();
+        modelDropdown.refresh();
+        updateContextRing();
     };
 
     const composerEditor: ComposerEditorHandle = mountComposerEditor({
@@ -977,13 +960,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const runCtl = new AbortController();
         let sessionAbort: (() => void) | null = null;
         sessionRuns.set(sendSessionId, {
+            sessionId: sendSessionId,
+            messages: sess.messages,
             ctl: runCtl,
             abortAgent: () => sessionAbort?.(),
         });
         const runSignal = runCtl.signal;
-        runningSessionId = sendSessionId;
-        agentRunMessages = sess.messages;
         syncSubmitRunning();
+        renderSessionList();
 
         let outcome: Awaited<ReturnType<typeof runAgentLoop>> | undefined;
         try {
@@ -993,7 +977,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 llm: {
                     baseUrl: settings.baseUrl,
                     apiKey: settings.apiKey,
-                    model: getSelectedModel() || settings.model,
+                    model: getSessionModel(sess) || settings.model,
                     thinkingEnabled: isThinkingEnabled(),
                 },
                 messages: sess.messages,
@@ -1010,8 +994,16 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 customInstructions: [settings.customInstructions, sess.customInstructions].filter(Boolean).join("\n"),
                 worksetNotebookIds: settings.worksetNotebookIds,
                 riskAutoApproveMax: settings.riskAutoApproveMax,
-                requestConfirm: inlineRequestConfirm,
-                showDiffPreview: inlineShowDiffPreview,
+                requestConfirm: createInlineToolConfirm(
+                    () => scheduleStreamRender(sendSessionId),
+                    () => getSessionRunSignal(sendSessionId),
+                    (req) => handleToolConfirmRequired(sendSessionId, req),
+                ),
+                showDiffPreview: createInlineDiffPreview(
+                    () => scheduleStreamRender(sendSessionId),
+                    (toolCallId, html, title) => attachDiffToMessages(sendSessionId, toolCallId, html, title),
+                    () => getSessionRunSignal(sendSessionId),
+                ),
                 onRunReady: (handles) => {
                     sessionAbort = handles.abort;
                 },
@@ -1033,15 +1025,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             }
         } finally {
             sessionRuns.delete(sendSessionId);
-            if (agentRunMessages === sess.messages) {
-                agentRunMessages = null;
-            }
-            if (runningSessionId === sendSessionId) {
-                runningSessionId = sessionRuns.size > 0
-                    ? [...sessionRuns.keys()][sessionRuns.size - 1]
-                    : null;
-            }
             syncSubmitRunning();
+            renderSessionList();
             if (sendSessionId === sessions.activeId) {
                 void renderMessages();
             }

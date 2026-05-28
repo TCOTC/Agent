@@ -3,8 +3,13 @@ import {emptyUsage} from "../core/tokenUsage";
 import type {ChatMessage} from "../agent/types";
 import type {ChatSession, SessionsPersisted} from "./types";
 
-export function createSession(title = "新对话", mode: AgentMode = "agent"): ChatSession {
+export function createSession(
+    title = "新对话",
+    mode: AgentMode = "agent",
+    model?: string,
+): ChatSession {
     const now = new Date().toISOString();
+    const trimmedModel = model?.trim();
     return {
         id: `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         title,
@@ -13,6 +18,7 @@ export function createSession(title = "新对话", mode: AgentMode = "agent"): C
         messages: [],
         tokenUsage: emptyUsage(),
         mode,
+        model: trimmedModel || undefined,
         pinned: false,
         customInstructions: "",
     };
@@ -32,6 +38,7 @@ export function normalizeSessions(raw: unknown): SessionsPersisted {
         ...createSession(s.title, s.mode ?? "agent"),
         ...s,
         mode: s.mode ?? "agent",
+        model: typeof s.model === "string" && s.model.trim() ? s.model.trim() : undefined,
         pinned: s.pinned ?? false,
         customInstructions: s.customInstructions ?? "",
         tokenUsage: s.tokenUsage ?? emptyUsage(),
