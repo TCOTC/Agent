@@ -135,32 +135,6 @@
   }
 }
 
-.agent-ctx-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--b3-theme-surface);
-  border: 1px solid var(--b3-border-color);
-  color: var(--b3-theme-on-background);
-
-  button {
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    opacity: 0.7;
-    padding: 0 2px;
-    font-size: 12px;
-    line-height: 1;
-
-    &:hover {
-      opacity: 1;
-    }
-  }
-}
-
 .agent-messages {
   padding: 12px 14px 16px;
 }

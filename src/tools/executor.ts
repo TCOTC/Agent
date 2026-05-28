@@ -1,7 +1,12 @@
 import {openTab} from "siyuan";
 import type Agent from "../index";
 import type {AuditEvent, KernelExecutor, ToolConfirmRequest, ToolName} from "../agent/types";
-import {captureEditorContext, Constants, formatEditorContextForPrompt} from "../core/editorContext";
+import {captureEditorContext, formatEditorContextForPrompt} from "../core/editorContext";
+import {
+    buildOpenDocumentAction,
+    getBlockFoldInfo,
+    navigateToBlockRef,
+} from "../siyuan/blockNavigation";
 import {agentBus, AgentEvents} from "../core/eventBus";
 import {computeLineDiff, diffSummary, renderDiffHtml} from "../editor/diffEngine";
 import {
@@ -23,46 +28,6 @@ import {checkWorkset, resolveNotebookId, worksetError} from "./worksetGate";
 import {isToolName} from "../agent/types";
 
 const SQL_READONLY = /^\s*(SELECT|WITH|EXPLAIN|VALUES)\b/i;
-
-async function getBlockFoldInfo(
-    kernel: KernelExecutor,
-    id: string,
-): Promise<{isFolded: boolean; isRoot: boolean}> {
-    const r = await kernel.post("/api/block/checkBlockFold", {id});
-    if (r.code !== 0) {
-        return {isFolded: false, isRoot: false};
-    }
-    const d = r.data as {isFolded?: boolean; isRoot?: boolean};
-    return {isFolded: !!d.isFolded, isRoot: !!d.isRoot};
-}
-
-/** 与思源 checkFold / openFileById 一致：CB_GET_ALL 仅用于折叠子块的缩放聚焦。 */
-function buildOpenDocumentAction(
-    highlight: boolean,
-    fold: {isFolded: boolean; isRoot: boolean},
-): string[] {
-    if (highlight) {
-        return fold.isFolded
-            ? [Constants.CB_GET_HL, Constants.CB_GET_ALL]
-            : [Constants.CB_GET_HL, Constants.CB_GET_CONTEXT, Constants.CB_GET_ROOTSCROLL];
-    }
-    if (fold.isRoot) {
-        return [];
-    }
-    return fold.isFolded ? [Constants.CB_GET_ALL] : [];
-}
-
-function buildFocusBlockAction(fold: {isFolded: boolean; isRoot: boolean}): string[] {
-    if (fold.isFolded) {
-        return [Constants.CB_GET_HL, Constants.CB_GET_FOCUS, Constants.CB_GET_ALL];
-    }
-    return [
-        Constants.CB_GET_HL,
-        Constants.CB_GET_CONTEXT,
-        Constants.CB_GET_ROOTSCROLL,
-        Constants.CB_GET_FOCUS,
-    ];
-}
 
 export interface ToolRunContext {
     kernel: KernelExecutor;
@@ -253,7 +218,7 @@ export async function runTool(
         }
 
         if (toolName === "get_focused_editor") {
-            const snap = captureEditorContext();
+            const snap = await captureEditorContext(ctx.kernel);
             const summary = formatEditorContextForPrompt(snap);
             const body = snap.selectedText?.trim()
                 ? `${summary}\n\n选区文本：\n${snap.selectedText}`
@@ -307,13 +272,7 @@ export async function runTool(
         if (toolName === "focus_block") {
             const id = String(args.id ?? "");
             const fold = await getBlockFoldInfo(ctx.kernel, id);
-            openTab({
-                app: ctx.plugin.app,
-                doc: {
-                    id,
-                    action: buildFocusBlockAction(fold),
-                },
-            });
+            await navigateToBlockRef({app: ctx.plugin.app, kernel: ctx.kernel, blockId: id});
             return {text: JSON.stringify({ok: true, id, ...fold}), ok: true};
         }
 

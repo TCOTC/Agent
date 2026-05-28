@@ -15,8 +15,6 @@ export function createSession(title = "新对话", mode: AgentMode = "agent"): C
         mode,
         pinned: false,
         customInstructions: "",
-        contextAttachments: [],
-        includeEditorContext: true,
     };
 }
 
@@ -36,8 +34,6 @@ export function normalizeSessions(raw: unknown): SessionsPersisted {
         mode: s.mode ?? "agent",
         pinned: s.pinned ?? false,
         customInstructions: s.customInstructions ?? "",
-        contextAttachments: s.contextAttachments ?? [],
-        includeEditorContext: s.includeEditorContext ?? true,
         tokenUsage: s.tokenUsage ?? emptyUsage(),
         lastContextTokens: typeof s.lastContextTokens === "number" ? s.lastContextTokens : undefined,
         messages: Array.isArray(s.messages) ? s.messages : [],

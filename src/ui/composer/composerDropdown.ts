@@ -15,12 +15,21 @@ export interface ComposerDropdownHandle<T extends string = string> {
 
 const dropdownClosers = new Set<() => void>();
 
-function closeOtherComposerDropdowns(except?: () => void): void {
+export function closeOtherComposerDropdowns(except?: () => void): void {
     for (const close of dropdownClosers) {
         if (close !== except) {
             close();
         }
     }
+}
+
+export function registerComposerMenuCloser(close: () => void): void {
+    closeOtherComposerDropdowns(close);
+    dropdownClosers.add(close);
+}
+
+export function unregisterComposerMenuCloser(close: () => void): void {
+    dropdownClosers.delete(close);
 }
 
 /** 关闭所有 Composer 下拉菜单（模式 / 模型等打开时可调用） */

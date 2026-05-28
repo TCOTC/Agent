@@ -8,6 +8,7 @@ import {createFetchSyncKernelExecutor} from "../../agent/kernelExecutor";
 import {ActivityLogBuffer} from "../../core/activityLog";
 import {STORAGE_KEY_ACTIVITY, STORAGE_KEY_SESSIONS, STORAGE_KEY_TOKEN_STATS} from "../../core/constants";
 import {closeAllComposerDropdowns, mountComposerDropdown} from "../composer/composerDropdown";
+import {mountComposerEditor, type ComposerEditorHandle} from "../composer/composerEditor";
 import {agentBus, AgentEvents} from "../../core/eventBus";
 import {
     formatTokenBrief,
@@ -47,7 +48,6 @@ import {
     registerConfirmToastHandler,
 } from "../notify/desktopNotify";
 import {downloadTextFile, sessionToMarkdown} from "../chat/exportSession";
-import {preloadAttachmentPreviews} from "../../context/preload";
 import {
     bindInlineToolActionHandlers,
     cancelPendingInlineActions,
@@ -102,7 +102,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         </button>
       </div>
     </header>
-    <div class="agent-main__ctx fn__flex" data-ctx-chips></div>
     <div class="agent-main__body fn__flex-1" data-tab-chat>
       <div class="agent-messages" data-messages></div>
     </div>
@@ -125,7 +124,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
       </div>
       <div class="agent-composer__card">
         <div class="agent-composer__input-wrap">
-          <textarea class="agent-composer__input" rows="1" data-input placeholder="说点什么…"></textarea>
+          <div class="agent-composer__editor" data-composer-editor></div>
         </div>
         <div class="agent-composer__footer">
           <div class="agent-composer__footer-start fn__flex">
@@ -171,10 +170,9 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const elSessionList = root.querySelector("[data-session-list]") as HTMLElement;
     const elSessionTitle = root.querySelector("[data-session-title]") as HTMLElement;
     const elSessionSearch = root.querySelector("[data-session-search]") as HTMLInputElement;
-    const elInput = root.querySelector("[data-input]") as HTMLTextAreaElement;
+    const elComposerEditor = root.querySelector("[data-composer-editor]") as HTMLElement;
     const elModeDropdown = root.querySelector("[data-mode-dropdown]") as HTMLElement;
     const elModelDropdown = root.querySelector("[data-model-dropdown]") as HTMLElement;
-    const elCtxChips = root.querySelector("[data-ctx-chips]") as HTMLElement;
     const elRingFill = root.querySelector("[data-ring-fill]") as SVGCircleElement;
     const elRingPct = root.querySelector("[data-ring-pct]") as HTMLElement;
     const elContextCard = root.querySelector("[data-context-card]") as HTMLElement;
@@ -462,7 +460,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 sessions.activeId = s.id;
                 persistSessions();
                 renderSessionList();
-                renderCtxChips();
                 modeDropdown.refresh();
                 updateSessionTitle();
                 void renderMessages();
@@ -486,22 +483,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 }
             });
             elSessionList.appendChild(btn);
-        }
-    };
-
-    const renderCtxChips = () => {
-        const s = getActive();
-        elCtxChips.replaceChildren();
-        for (const a of s.contextAttachments) {
-            const chip = document.createElement("span");
-            chip.className = "agent-ctx-chip";
-            chip.innerHTML = `${esc(a.label)} <button type="button" data-rm="${a.id}">×</button>`;
-            chip.querySelector("button")?.addEventListener("click", () => {
-                s.contextAttachments = s.contextAttachments.filter((x) => x.id !== a.id);
-                persistSessions();
-                renderCtxChips();
-            });
-            elCtxChips.appendChild(chip);
         }
     };
 
@@ -652,6 +633,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 <h3>Agent 已就绪</h3>
 <p>问答 · 多步工具 · 文档 Diff 编辑</p>
 <ul>
+<li><kbd>@</kbd> 搜索并引用块（内联芯片）</li>
 <li><kbd>Shift+Tab</kbd> 切换模式</li>
 <li>${sendHint}</li>
 </ul>
@@ -813,8 +795,19 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         doResend();
     };
 
+    const getSendKeyMode = () => normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]).sendKeyMode;
+
+    const composerEditor: ComposerEditorHandle = mountComposerEditor({
+        editorHost: elComposerEditor,
+        app: plugin.app,
+        kernel,
+        placeholder: "说点什么…，@ 引用块可点击跳转",
+        sendKeyMode: getSendKeyMode(),
+        onSend: () => void runSend(),
+    });
+
     const runSend = async (opts?: {text?: string; truncateFrom?: ChatMessage}) => {
-        const text = (opts?.text ?? elInput.value).trim();
+        const text = (opts?.text ?? composerEditor.getSendText()).trim();
         if (!text) {
             return;
         }
@@ -824,15 +817,13 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             return;
         }
         if (!opts?.text) {
-            elInput.value = "";
+            composerEditor.clear();
         }
         if (opts?.truncateFrom) {
             truncateFromMessage(opts.truncateFrom);
         }
 
         const sess = getActive();
-        const attachments = await preloadAttachmentPreviews(kernel, sess.contextAttachments);
-
         abortCtl?.abort();
         abortCtl = new AbortController();
         setSubmitRunning(true);
@@ -857,7 +848,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                     updateContextRing();
                 },
                 customInstructions: [settings.customInstructions, sess.customInstructions].filter(Boolean).join("\n"),
-                attachments,
                 worksetNotebookIds: settings.worksetNotebookIds,
                 riskAutoApproveMax: settings.riskAutoApproveMax,
                 requestConfirm: inlineRequestConfirm,
@@ -900,7 +890,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             plugin.showPluginMessage("没有可重新生成的消息");
             return;
         }
-        elInput.value = lastUser.content;
+        composerEditor.setSendText(lastUser.content);
         s.messages.pop();
         persistSessions();
         void renderMessages();
@@ -1042,9 +1032,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
         void runSend();
     });
-    elInput.addEventListener("keydown", (ev) => {
-        const sendKeyMode = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]).sendKeyMode;
-        handleComposerEnterKey(ev, elInput, sendKeyMode, () => void runSend());
+    elComposerEditor.addEventListener("keydown", (ev) => {
         if (ev.key === "Tab" && ev.shiftKey) {
             ev.preventDefault();
             cycleMode(1);
@@ -1068,7 +1056,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     modeDropdown.refresh();
     renderSessionList();
-    renderCtxChips();
     updateSessionTitle();
     updateContextRing();
     void loadModels();
@@ -1085,6 +1072,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         abortCtl?.abort();
         modeDropdown.destroy();
         modelDropdown.destroy();
+        composerEditor.destroy();
         root.removeEventListener("click", onShellClick);
         offMessages();
         offStream();

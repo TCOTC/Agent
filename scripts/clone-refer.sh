@@ -23,5 +23,6 @@ clone_if_missing siyuan-plugins-ai-cli-bridge https://github.com/yangtaihong59/s
 clone_if_missing siyuan-ai-assistant https://github.com/DUZSSY/siyuan-ai-assistant.git
 clone_if_missing sy-f-misc https://github.com/frostime/sy-f-misc.git
 clone_if_missing pi https://github.com/earendil-works/pi.git
+clone_if_missing tiptap https://github.com/ueberdosis/tiptap.git
 
 echo "done: refer/ ready for offline reading"

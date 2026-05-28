@@ -7,7 +7,7 @@
 ### 交互（对标 Cursor）
 - **左侧会话栏**：搜索、置顶、右键删除、导出 Markdown
 - **聊天 / 运行** 双 Tab：流式思考 + Protyle 预览 + 工具执行实时状态
-- **Composer**：上下文芯片、Ctrl+Enter 发送
+- **Composer**：TipTap 内联 `@` 块引用芯片、上下文附件、可配置发送快捷键
 - **Diff 弹窗**：大段文档改写先 propose 再 apply
 - **重新生成 ↻**、导出对话 ↓
 

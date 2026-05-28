@@ -1,4 +1,4 @@
-import {Plugin, showMessage, adaptHotkey, confirm} from "siyuan";
+import {Plugin, showMessage, adaptHotkey, confirm, getActiveEditor} from "siyuan";
 import "./index.scss";
 import {mountAgentPanel} from "./ui/dock/panel";
 import {destroyCachedLute} from "./render/lute";
@@ -75,6 +75,8 @@ export default class Agent extends Plugin {
     }
 
     onload() {
+        // 供控制台手动测试：getActiveEditor() / getActiveEditor(false)
+        window.getActiveEditor = getActiveEditor;
         installConfirmVisibilityListener();
         this.addIcons(`<symbol id="iconAgent" viewBox="0 0 32 32">
 <path d="M16 4c-4.4 0-8 3.6-8 8 0 2.2 0.9 4.2 2.3 5.7L8 22l4.3-2.3c1.5 1.4 3.5 2.3 5.7 2.3 4.4 0 8-3.6 8-8s-3.6-8-8-8zm0 14c-3.3 0-6-2.7-6-6s2.7-6 6-6 6 2.7 6 6-2.7 6-6 6zm8 6h-2v2h2v4h2v-4h4v-2h-4v-2z"/>
@@ -96,6 +98,7 @@ export default class Agent extends Plugin {
     }
 
     onunload() {
+        delete window.getActiveEditor;
         this.dockInitGen++;
         this.destroyDockPanel?.();
         this.destroyDockPanel = null;

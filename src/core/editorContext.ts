@@ -1,5 +1,8 @@
 import {Constants, getActiveEditor} from "siyuan";
 
+import type {KernelExecutor} from "../agent/types";
+import {fetchDocumentRootTitle} from "../siyuan/documentTitle";
+
 export interface EditorContextSnapshot {
     rootId?: string;
     rootTitle?: string;
@@ -10,7 +13,7 @@ export interface EditorContextSnapshot {
 }
 
 /** 采集当前编辑器上下文，供系统提示与 @ 引用 */
-export function captureEditorContext(): EditorContextSnapshot {
+export async function captureEditorContext(kernel: KernelExecutor): Promise<EditorContextSnapshot> {
     const snap: EditorContextSnapshot = {};
     const editor = getActiveEditor(false);
     if (!editor?.protyle) {
@@ -19,18 +22,13 @@ export function captureEditorContext(): EditorContextSnapshot {
     const {block, rootId, notebookId, path} = editor.protyle;
     if (rootId) {
         snap.rootId = rootId;
+        snap.rootTitle = await fetchDocumentRootTitle(kernel, rootId);
     }
     if (notebookId) {
         snap.notebookId = notebookId;
     }
     if (path) {
         snap.path = path;
-    }
-    const titleEl = editor.protyle.element.querySelector(
-        ".protyle-title__text",
-    ) as HTMLElement | null;
-    if (titleEl?.textContent) {
-        snap.rootTitle = titleEl.textContent.trim();
     }
     if (block?.id) {
         snap.focusedBlockId = block.id;
