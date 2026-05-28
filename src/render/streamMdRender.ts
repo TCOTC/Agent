@@ -18,9 +18,8 @@ import {logger} from "../util";
 import type {ChatMessage} from "../agent/types";
 import type {LuteEngine} from "./lute";
 
-/** 思考区流式：跳过主线程封存循环；tail md2html 最小间隔（ms） */
-const REASONING_STREAM_SKIP_SEAL = true;
-const REASONING_TAIL_THROTTLE_MS = 100;
+/** 流式 tail md2html 最小间隔（ms）；思考区与正文共用；封存循环保持开启以便逐块渲染特殊块 */
+const STREAM_TAIL_THROTTLE_MS = 100;
 
 export interface StreamMdComputeOptions {
     kind?: "content" | "reasoning";
@@ -65,17 +64,13 @@ export interface StreamingMdDomParts {
     tailThrottled?: boolean;
 }
 
-/** 按通道返回 compute 选项（思考区流式默认跳过封存并节流 tail） */
+/** 按通道返回 compute 选项（流式时 tail md2html 节流，封存照常以便逐块特殊渲染） */
 export function streamMdOptsForHost(
     kind: "content" | "reasoning",
     streamOpen: boolean,
 ): StreamMdComputeOptions {
-    if (kind === "reasoning" && streamOpen) {
-        return {
-            kind: "reasoning",
-            skipSealLoop: REASONING_STREAM_SKIP_SEAL,
-            throttleTailMs: REASONING_TAIL_THROTTLE_MS,
-        };
+    if (streamOpen) {
+        return {kind, throttleTailMs: STREAM_TAIL_THROTTLE_MS};
     }
     return {kind};
 }

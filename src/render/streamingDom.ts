@@ -4,7 +4,7 @@ import {
     getStreamingAssistantMdParts,
 } from "./streamMdRender";
 import type {LuteEngine} from "./lute";
-import {renderProtyleBlock} from "./protyleBlockRender";
+import {renderProtyleBlock, renderProtyleBlockPending} from "./protyleBlockRender";
 
 export type StreamingMdDom = {
     sealedBlocks: Map<number, Element[]>;
@@ -203,11 +203,13 @@ async function performSyncStreamingMdHost(blocksRoot: HTMLElement, job: HostSync
             continue;
         }
         const blocks = insertSealedHtmlAsDirectChildren(blocksRoot, dom, i, sealedHtmlParts[i]);
-        renderProtyleBlock(blocks, blocksRoot);
+        renderProtyleBlockPending(blocks, blocksRoot);
     }
 
     syncTailDirectChildren(blocksRoot, dom, tailHtml, n, kind);
-    if (!streamOpen) {
+    if (streamOpen) {
+        renderProtyleBlockPending(dom.tailBlocks, blocksRoot);
+    } else {
         renderProtyleBlock(dom.tailBlocks, blocksRoot);
     }
     lastHostSyncByBlocksRoot.set(blocksRoot, {fullMd, streamOpen});
