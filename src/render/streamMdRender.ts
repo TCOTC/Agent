@@ -18,6 +18,18 @@ import {logger} from "../util";
 import type {ChatMessage} from "../agent/types";
 import type {LuteEngine} from "./lute";
 
+/** 思考区流式：跳过主线程封存循环；tail md2html 最小间隔（ms） */
+const REASONING_STREAM_SKIP_SEAL = true;
+const REASONING_TAIL_THROTTLE_MS = 100;
+
+export interface StreamMdComputeOptions {
+    kind?: "content" | "reasoning";
+    /** 流式思考阶段跳过 Md2BlockDOM 封存循环，thinking_end 时 finalize */
+    skipSealLoop?: boolean;
+    /** tail md2html 节流，间隔内复用上一帧 HTML */
+    throttleTailMs?: number;
+}
+
 export interface StreamMdCache {
     /** 已封存的前缀字符长度，与 fullMd.slice(0, sealedLen) 对应 */
     sealedLen: number;
@@ -35,8 +47,10 @@ export interface StreamMdCache {
     /** 上一帧 tail Markdown / HTML，避免相同 tail 重复 md2html */
     lastTailMd?: string;
     lastTailHtml?: string;
+    lastTailMd2htmlAt?: number;
     inflight?: Promise<void>;
     pendingFullMd?: string;
+    pendingOpts?: StreamMdComputeOptions;
     /** 尾部 remainder 已一次性封存（推理区在 thinking 结束后不再走 tail 流式） */
     remainderFinalized?: boolean;
 }
@@ -47,6 +61,23 @@ export interface StreamingMdDomParts {
     tailHtml: string;
     /** 本帧是否因前缀失效而重置了封存缓存（须同步清空 DOM） */
     cacheReset: boolean;
+    /** tail md2html 是否因节流复用了上一帧 HTML */
+    tailThrottled?: boolean;
+}
+
+/** 按通道返回 compute 选项（思考区流式默认跳过封存并节流 tail） */
+export function streamMdOptsForHost(
+    kind: "content" | "reasoning",
+    streamOpen: boolean,
+): StreamMdComputeOptions {
+    if (kind === "reasoning" && streamOpen) {
+        return {
+            kind: "reasoning",
+            skipSealLoop: REASONING_STREAM_SKIP_SEAL,
+            throttleTailMs: REASONING_TAIL_THROTTLE_MS,
+        };
+    }
+    return {kind};
 }
 
 const streamCacheContent = new WeakMap<ChatMessage, StreamMdCache>();
@@ -206,25 +237,44 @@ function publishCacheSnapshot(c: StreamMdCache, fullMd: string): StreamingMdDomP
     return parts;
 }
 
-async function tailMarkdownToHtml(c: StreamMdCache, tail: string): Promise<string> {
+async function tailMarkdownToHtml(
+    c: StreamMdCache,
+    tail: string,
+    throttleTailMs?: number,
+): Promise<{html: string; throttled: boolean}> {
     if (!tail.trim()) {
         delete c.lastTailMd;
         delete c.lastTailHtml;
-        return "";
+        delete c.lastTailMd2htmlAt;
+        return {html: "", throttled: false};
     }
     if (tail === c.lastTailMd && c.lastTailHtml !== undefined) {
-        return c.lastTailHtml;
+        return {html: c.lastTailHtml, throttled: false};
+    }
+    const now = performance.now();
+    if (
+        throttleTailMs &&
+        throttleTailMs > 0 &&
+        c.lastTailHtml !== undefined &&
+        c.lastTailMd &&
+        tail !== c.lastTailMd &&
+        c.lastTailMd2htmlAt != null &&
+        now - c.lastTailMd2htmlAt < throttleTailMs
+    ) {
+        return {html: c.lastTailHtml, throttled: true};
     }
     const html = await markdownToProtylePreviewHtml(tail);
     c.lastTailMd = tail;
     c.lastTailHtml = html;
-    return html;
+    c.lastTailMd2htmlAt = now;
+    return {html, throttled: false};
 }
 
 async function computeStreamingMdParts(
     fullMd: string,
     lute: LuteEngine,
     c: StreamMdCache,
+    opts?: StreamMdComputeOptions,
 ): Promise<StreamingMdDomParts> {
     if (c.remainderFinalized && c.sealedLen === fullMd.length && c.lastParts) {
         return c.lastParts;
@@ -238,26 +288,29 @@ async function computeStreamingMdParts(
     }
 
     let tail = fullMd.slice(c.sealedLen);
-    let sealPass = 0;
-    while (countTopLevelBlockDivs(lute, tail) >= 2) {
-        const narrowBase = sealPass === 0 ? c.lastTailLen : 0;
-        const L = findSealLenFirstBlockAligned(lute, tail, narrowBase);
-        sealPass++;
-        if (L <= 0) {
-            break;
+    if (!opts?.skipSealLoop) {
+        let sealPass = 0;
+        while (countTopLevelBlockDivs(lute, tail) >= 2) {
+            const narrowBase = sealPass === 0 ? c.lastTailLen : 0;
+            const L = findSealLenFirstBlockAligned(lute, tail, narrowBase);
+            sealPass++;
+            if (L <= 0) {
+                break;
+            }
+            const sealedMd = tail.slice(0, L);
+            c.sealedHtmlParts.push(await markdownToProtylePreviewHtml(sealedMd));
+            c.sealedLen += L;
+            tail = fullMd.slice(c.sealedLen);
         }
-        const sealedMd = tail.slice(0, L);
-        c.sealedHtmlParts.push(await markdownToProtylePreviewHtml(sealedMd));
-        c.sealedLen += L;
-        tail = fullMd.slice(c.sealedLen);
     }
 
     c.lastTailLen = tail.length;
-    const tailHtml = await tailMarkdownToHtml(c, tail);
+    const {html: tailHtml, throttled} = await tailMarkdownToHtml(c, tail, opts?.throttleTailMs);
     return {
         sealedHtmlParts: c.sealedHtmlParts.slice(),
         tailHtml,
         cacheReset,
+        tailThrottled: throttled,
     };
 }
 
@@ -270,6 +323,15 @@ export async function finalizeStreamingMdRemainder(
     fullMd: string,
     lute: LuteEngine,
     kind: "content" | "reasoning" = "content",
+): Promise<void> {
+    return finalizeStreamingMdRemainderInner(msg, fullMd, lute, kind);
+}
+
+async function finalizeStreamingMdRemainderInner(
+    msg: ChatMessage,
+    fullMd: string,
+    lute: LuteEngine,
+    kind: "content" | "reasoning",
 ): Promise<void> {
     const map = getCacheMap(kind);
     let c = map.get(msg);
@@ -306,7 +368,9 @@ export async function getStreamingAssistantMdParts(
     fullMd: string,
     lute: LuteEngine,
     kind: "content" | "reasoning" = "content",
+    streamOpen = true,
 ): Promise<StreamingMdDomParts> {
+    const mergedOpts = streamMdOptsForHost(kind, streamOpen);
     const map = getCacheMap(kind);
     let c = map.get(msg);
     if (!c) {
@@ -319,11 +383,13 @@ export async function getStreamingAssistantMdParts(
     }
 
     c.pendingFullMd = fullMd;
+    c.pendingOpts = mergedOpts;
     if (!c.inflight) {
         c.inflight = (async () => {
             for (;;) {
                 const md = c!.pendingFullMd ?? "";
-                const parts = await computeStreamingMdParts(md, lute, c!);
+                const o = c!.pendingOpts ?? streamMdOptsForHost(kind, streamOpen);
+                const parts = await computeStreamingMdParts(md, lute, c!, o);
                 c!.lastFullMd = md;
                 c!.lastParts = parts;
                 if (c!.pendingFullMd === md) {
@@ -337,7 +403,7 @@ export async function getStreamingAssistantMdParts(
     await c.inflight;
 
     if (c.pendingFullMd !== fullMd) {
-        return getStreamingAssistantMdParts(msg, fullMd, lute, kind);
+        return getStreamingAssistantMdParts(msg, fullMd, lute, kind, streamOpen);
     }
 
     return c.lastParts ?? {
@@ -356,7 +422,7 @@ export async function renderStreamingAssistantMd(
     lute: LuteEngine,
     kind: "content" | "reasoning" = "content",
 ): Promise<string> {
-    const p = await getStreamingAssistantMdParts(msg, fullMd, lute, kind);
+    const p = await getStreamingAssistantMdParts(msg, fullMd, lute, kind, false);
     return p.sealedHtmlParts.join("") + p.tailHtml;
 }
 

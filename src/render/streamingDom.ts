@@ -89,6 +89,7 @@ function syncTailDirectChildren(
     dom: StreamingMdDom,
     tailHtml: string,
     sealedN: number,
+    kind: "content" | "reasoning",
 ): void {
     const prev = tailSyncStateByBlocksRoot.get(blocksRoot);
     if (prev && prev.tailHtml === tailHtml && prev.sealedN === sealedN) {
@@ -139,7 +140,10 @@ export function clearStreamingDomHost(blocksRoot: HTMLElement): void {
     hostSyncChainByBlocksRoot.delete(blocksRoot);
 }
 
-function rebuildStreamingDomHost(blocksRoot: HTMLElement): StreamingMdDom {
+function rebuildStreamingDomHost(
+    blocksRoot: HTMLElement,
+    kind: "content" | "reasoning",
+): StreamingMdDom {
     clearStreamingDomHost(blocksRoot);
     blocksRoot.replaceChildren();
     const dom: StreamingMdDom = {sealedBlocks: new Map(), tailBlocks: []};
@@ -157,7 +161,13 @@ async function performSyncStreamingMdHost(blocksRoot: HTMLElement, job: HostSync
     const gen = (hostGenerationByBlocksRoot.get(blocksRoot) ?? 0) + 1;
     hostGenerationByBlocksRoot.set(blocksRoot, gen);
 
-    const {sealedHtmlParts, tailHtml, cacheReset} = await getStreamingAssistantMdParts(m, fullMd, lute, kind);
+    const {sealedHtmlParts, tailHtml, cacheReset, tailThrottled} = await getStreamingAssistantMdParts(
+        m,
+        fullMd,
+        lute,
+        kind,
+        streamOpen,
+    );
     if (destroyed() || hostGenerationByBlocksRoot.get(blocksRoot) !== gen) {
         return;
     }
@@ -171,7 +181,7 @@ async function performSyncStreamingMdHost(blocksRoot: HTMLElement, job: HostSync
         (prevTail != null && n < prevTail.sealedN) ||
         (n === 0 && !fullMd.trim() && blocksRoot.childElementCount > 0)
     ) {
-        dom = rebuildStreamingDomHost(blocksRoot);
+        dom = rebuildStreamingDomHost(blocksRoot, kind);
     }
 
     let sealedRemoved = false;
@@ -196,7 +206,7 @@ async function performSyncStreamingMdHost(blocksRoot: HTMLElement, job: HostSync
         renderProtyleBlock(blocks, blocksRoot);
     }
 
-    syncTailDirectChildren(blocksRoot, dom, tailHtml, n);
+    syncTailDirectChildren(blocksRoot, dom, tailHtml, n, kind);
     if (!streamOpen) {
         renderProtyleBlock(dom.tailBlocks, blocksRoot);
     }
