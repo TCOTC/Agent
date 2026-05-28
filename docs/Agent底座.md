@@ -122,6 +122,7 @@ CLI 产品，但 **`core/sdk.ts` 是嵌入型 Agent 范本**。
 ## 四、建议阅读顺序（clone 后）
 
 ```bash
+# 若 refer/ 尚未克隆，先在仓库根目录执行：scripts/clone-refer.sh
 cd refer/pi
 npm install --ignore-scripts
 npm run build
