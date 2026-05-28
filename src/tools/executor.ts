@@ -64,6 +64,8 @@ export interface ToolRunContext {
     showDiffPreview?: (html: string, title: string) => Promise<boolean>;
     /** 长时间工具步骤的 UI 提示（如等待 diff 确认） */
     onToolUiHint?: (hint: string) => void;
+    /** 已由 Agent beforeToolCall 完成风险确认时跳过 gateConfirm */
+    skipRiskGate?: boolean;
 }
 
 function parseArgs(raw: string): Record<string, unknown> {
@@ -86,8 +88,8 @@ async function gateConfirm(
         return {proceed: false, riskScore: 100, autoApproved: false};
     }
     const risk = assessToolRisk(def, args, ctx.riskAutoApproveMax);
-    if (risk.autoApprove) {
-        return {proceed: true, riskScore: risk.score, autoApproved: true};
+    if (ctx.skipRiskGate || risk.autoApprove) {
+        return {proceed: true, riskScore: risk.score, autoApproved: ctx.skipRiskGate || risk.autoApprove};
     }
     ctx.onAudit({kind: "tool_confirm_required", name, detail, riskScore: risk.score});
     const approved = await ctx.requestConfirm(`Agent · ${name}`, `${formatRiskSummary(risk)}\n\n${detail}`);

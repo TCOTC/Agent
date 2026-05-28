@@ -13,8 +13,20 @@ export type StreamingMdDom = {
 
 const streamingMdDomByBlocksRoot = new WeakMap<HTMLElement, StreamingMdDom>();
 const tailSyncStateByBlocksRoot = new WeakMap<HTMLElement, {tailHtml: string; sealedN: number}>();
+const lastHostSyncByBlocksRoot = new WeakMap<HTMLElement, {fullMd: string; streamOpen: boolean}>();
 /** 异步 md2html 世代号，丢弃过期的 DOM 写入 */
 const hostGenerationByBlocksRoot = new WeakMap<HTMLElement, number>();
+const hostSyncChainByBlocksRoot = new WeakMap<HTMLElement, Promise<void>>();
+
+type HostSyncJob = {
+    m: ChatMessage;
+    fullMd: string;
+    lute: LuteEngine;
+    kind: "content" | "reasoning";
+    streamOpen: boolean;
+    destroyed: () => boolean;
+};
+const hostSyncPendingByBlocksRoot = new WeakMap<HTMLElement, HostSyncJob>();
 
 function getStreamingMdDomForRoot(blocksRoot: HTMLElement): StreamingMdDom {
     let d = streamingMdDomByBlocksRoot.get(blocksRoot);
@@ -96,31 +108,46 @@ function syncTailDirectChildren(
 export function clearStreamingDomHost(blocksRoot: HTMLElement): void {
     streamingMdDomByBlocksRoot.delete(blocksRoot);
     tailSyncStateByBlocksRoot.delete(blocksRoot);
+    lastHostSyncByBlocksRoot.delete(blocksRoot);
     hostGenerationByBlocksRoot.delete(blocksRoot);
+    hostSyncPendingByBlocksRoot.delete(blocksRoot);
+    hostSyncChainByBlocksRoot.delete(blocksRoot);
+}
+
+function rebuildStreamingDomHost(blocksRoot: HTMLElement): StreamingMdDom {
+    clearStreamingDomHost(blocksRoot);
+    blocksRoot.replaceChildren();
+    const dom: StreamingMdDom = {sealedBlocks: new Map(), tailBlocks: []};
+    streamingMdDomByBlocksRoot.set(blocksRoot, dom);
+    return dom;
 }
 
 /** 流式 Markdown 预览 DOM 增量同步 */
-export async function syncStreamingMdHost(
-    blocksRoot: HTMLElement,
-    m: ChatMessage,
-    fullMd: string,
-    lute: LuteEngine,
-    kind: "content" | "reasoning",
-    streamOpen: boolean,
-    destroyed: () => boolean,
-): Promise<void> {
+async function performSyncStreamingMdHost(blocksRoot: HTMLElement, job: HostSyncJob): Promise<void> {
+    const {m, fullMd, lute, kind, streamOpen, destroyed} = job;
     if (destroyed()) {
         return;
     }
+
     const gen = (hostGenerationByBlocksRoot.get(blocksRoot) ?? 0) + 1;
     hostGenerationByBlocksRoot.set(blocksRoot, gen);
 
-    const {sealedHtmlParts, tailHtml} = await getStreamingAssistantMdParts(m, fullMd, lute, kind);
+    const {sealedHtmlParts, tailHtml, cacheReset} = await getStreamingAssistantMdParts(m, fullMd, lute, kind);
     if (destroyed() || hostGenerationByBlocksRoot.get(blocksRoot) !== gen) {
         return;
     }
+
+    let dom = getStreamingMdDomForRoot(blocksRoot);
     const n = sealedHtmlParts.length;
-    const dom = getStreamingMdDomForRoot(blocksRoot);
+    const prevTail = tailSyncStateByBlocksRoot.get(blocksRoot);
+
+    if (
+        cacheReset ||
+        (prevTail != null && n < prevTail.sealedN) ||
+        (n === 0 && !fullMd.trim() && blocksRoot.childElementCount > 0)
+    ) {
+        dom = rebuildStreamingDomHost(blocksRoot);
+    }
 
     let sealedRemoved = false;
     for (const idx of [...dom.sealedBlocks.keys()]) {
@@ -148,6 +175,49 @@ export async function syncStreamingMdHost(
     if (!streamOpen) {
         renderProtyleBlock(dom.tailBlocks, blocksRoot);
     }
+    lastHostSyncByBlocksRoot.set(blocksRoot, {fullMd, streamOpen});
+}
+
+export async function syncStreamingMdHost(
+    blocksRoot: HTMLElement,
+    m: ChatMessage,
+    fullMd: string,
+    lute: LuteEngine,
+    kind: "content" | "reasoning",
+    streamOpen: boolean,
+    destroyed: () => boolean,
+): Promise<void> {
+    if (destroyed()) {
+        return;
+    }
+
+    const prevHostSync = lastHostSyncByBlocksRoot.get(blocksRoot);
+    if (prevHostSync?.fullMd === fullMd && prevHostSync.streamOpen === streamOpen) {
+        return;
+    }
+
+    hostSyncPendingByBlocksRoot.set(blocksRoot, {m, fullMd, lute, kind, streamOpen, destroyed});
+
+    let chain = hostSyncChainByBlocksRoot.get(blocksRoot);
+    if (!chain) {
+        chain = (async () => {
+            for (;;) {
+                const job = hostSyncPendingByBlocksRoot.get(blocksRoot);
+                if (!job) {
+                    break;
+                }
+                hostSyncPendingByBlocksRoot.delete(blocksRoot);
+                await performSyncStreamingMdHost(blocksRoot, job);
+                if (!hostSyncPendingByBlocksRoot.has(blocksRoot)) {
+                    break;
+                }
+            }
+        })().finally(() => {
+            hostSyncChainByBlocksRoot.delete(blocksRoot);
+        });
+        hostSyncChainByBlocksRoot.set(blocksRoot, chain);
+    }
+    await chain;
 }
 
 export async function syncAssistantMessageDom(
@@ -175,7 +245,8 @@ export async function syncAssistantMessageDom(
         reasoningHost.hidden = false;
         reasoningHost.className =
             "agent-msg__reasoning b3-typography b3-typography--default";
-        if (contentRaw.length > 0) {
+        // thinking 结束或正文已开始：一次性封存推理区，避免 tool call 阶段反复 md2html
+        if (!streamOpen || contentRaw.length > 0) {
             await finalizeStreamingMdRemainder(m, reasoningRaw, lute, "reasoning");
             if (destroyed()) {
                 return;

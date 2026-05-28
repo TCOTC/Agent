@@ -64,6 +64,18 @@ function toolHintSig(m: ChatMessage): string {
     return m._toolHint ? JSON.stringify(m._toolHint) : "";
 }
 
+function toolCallsSig(m: ChatMessage, llmStreaming: boolean): string {
+    if (!m.tool_calls?.length) {
+        return "";
+    }
+    if (llmStreaming) {
+        return m.tool_calls
+            .map((t) => `${t.id}:${t.function.name}:${t.function.arguments?.length ?? 0}`)
+            .join("|");
+    }
+    return m.tool_calls.map((t) => `${t.id}:${t.function.name}`).join(",");
+}
+
 export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
     const think = row.querySelector(".agent-msg__think") as HTMLDetailsElement | null;
     const reasoningHost = row.querySelector(".agent-msg__reasoning") as HTMLElement | null;
@@ -78,23 +90,26 @@ export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
     if (bodyEl) {
         bodyEl.textContent = m.content ?? "";
     }
-    renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m);
+    renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m, {
+        llmStreaming: m._streaming === true,
+    });
 }
 
 export async function patchAssistantRow(
     row: HTMLElement,
     m: ChatMessage,
     lute: LuteEngine,
-    streamOpen: boolean,
     destroyed: () => boolean,
 ): Promise<void> {
     const reasoningRaw = m.reasoning_content ? String(m.reasoning_content) : "";
     const contentRaw = m.content ?? "";
-    const toolsSig = m.tool_calls?.map((t) => t.function.name).join(",") ?? "";
+    const mdStreaming = m._mdStreaming === true;
+    const toolsSig = toolCallsSig(m, m._streaming === true);
     const statusSig = m._toolStatus ? JSON.stringify(m._toolStatus) : "";
     const resultsSig = toolResultsSig(m);
     const hintSig = toolHintSig(m);
     const prev = (row as unknown as Record<string, Patch | undefined>)[PATCH];
+    const bodyUnchanged = prev != null && prev.content === contentRaw && prev.reasoning === reasoningRaw;
     if (
         prev &&
         prev.content === contentRaw &&
@@ -103,7 +118,7 @@ export async function patchAssistantRow(
         prev.statusSig === statusSig &&
         prev.resultsSig === resultsSig &&
         prev.hintSig === hintSig &&
-        prev.streamOpen === streamOpen
+        prev.streamOpen === mdStreaming
     ) {
         return;
     }
@@ -114,7 +129,7 @@ export async function patchAssistantRow(
         statusSig,
         resultsSig,
         hintSig,
-        streamOpen,
+        streamOpen: mdStreaming,
     };
 
     const think = row.querySelector(".agent-msg__think") as HTMLDetailsElement | null;
@@ -122,7 +137,9 @@ export async function patchAssistantRow(
         think.hidden = !reasoningRaw;
     }
 
-    renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m);
+    renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m, {
+        llmStreaming: m._streaming === true,
+    });
 
     const copyBtn = row.querySelector("[data-copy-md]");
     if (copyBtn && !copyBtn.hasAttribute("data-bound")) {
@@ -132,7 +149,10 @@ export async function patchAssistantRow(
         });
     }
 
-    await syncAssistantMessageDom(row, m, lute, streamOpen, destroyed);
+    const needStreamFinalize = prev != null && prev.streamOpen && !mdStreaming;
+    if (!bodyUnchanged || needStreamFinalize) {
+        await syncAssistantMessageDom(row, m, lute, mdStreaming, destroyed);
+    }
 }
 
 /** 确保消息行已挂载到 DOM（在 async 渲染之前同步执行，避免竞态） */

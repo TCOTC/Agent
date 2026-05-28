@@ -28,12 +28,25 @@ export interface StreamMdCache {
      * 同一次 `getStreamingAssistantMdParts` 内第二次及以后的封存轮次传 0，退化为全区间扫描。
      */
     lastTailLen: number;
+    /** 最近一次计算时的 fullMd（用于合并并发请求） */
+    lastFullMd?: string;
+    /** 最近一次返回结果 */
+    lastParts?: StreamingMdDomParts & {cacheReset: boolean};
+    /** 上一帧 tail Markdown / HTML，避免相同 tail 重复 md2html */
+    lastTailMd?: string;
+    lastTailHtml?: string;
+    inflight?: Promise<void>;
+    pendingFullMd?: string;
+    /** 尾部 remainder 已一次性封存（推理区在 thinking 结束后不再走 tail 流式） */
+    remainderFinalized?: boolean;
 }
 
 /** 供 DOM 增量挂载：已封存的顶层块 HTML 与未完成的尾部 HTML */
 export interface StreamingMdDomParts {
     sealedHtmlParts: string[];
     tailHtml: string;
+    /** 本帧是否因前缀失效而重置了封存缓存（须同步清空 DOM） */
+    cacheReset: boolean;
 }
 
 const streamCacheContent = new WeakMap<ChatMessage, StreamMdCache>();
@@ -173,6 +186,79 @@ function resetCache(c: StreamMdCache): void {
     c.sealedLen = 0;
     c.sealedHtmlParts.length = 0;
     c.lastTailLen = 0;
+    c.remainderFinalized = false;
+    delete c.lastTailMd;
+    delete c.lastTailHtml;
+    delete c.lastFullMd;
+    delete c.lastParts;
+}
+
+function publishCacheSnapshot(c: StreamMdCache, fullMd: string): StreamingMdDomParts {
+    const parts: StreamingMdDomParts = {
+        sealedHtmlParts: c.sealedHtmlParts.slice(),
+        tailHtml: "",
+        cacheReset: false,
+    };
+    c.lastFullMd = fullMd;
+    c.lastParts = parts;
+    delete c.lastTailMd;
+    delete c.lastTailHtml;
+    return parts;
+}
+
+async function tailMarkdownToHtml(c: StreamMdCache, tail: string): Promise<string> {
+    if (!tail.trim()) {
+        delete c.lastTailMd;
+        delete c.lastTailHtml;
+        return "";
+    }
+    if (tail === c.lastTailMd && c.lastTailHtml !== undefined) {
+        return c.lastTailHtml;
+    }
+    const html = await markdownToProtylePreviewHtml(tail);
+    c.lastTailMd = tail;
+    c.lastTailHtml = html;
+    return html;
+}
+
+async function computeStreamingMdParts(
+    fullMd: string,
+    lute: LuteEngine,
+    c: StreamMdCache,
+): Promise<StreamingMdDomParts> {
+    if (c.remainderFinalized && c.sealedLen === fullMd.length && c.lastParts) {
+        return c.lastParts;
+    }
+
+    let cacheReset = false;
+    const prevPrefix = c.sealedLen > 0 ? fullMd.slice(0, c.sealedLen) : "";
+    if (fullMd.length < c.sealedLen || (c.sealedLen > 0 && !fullMd.startsWith(prevPrefix))) {
+        resetCache(c);
+        cacheReset = true;
+    }
+
+    let tail = fullMd.slice(c.sealedLen);
+    let sealPass = 0;
+    while (countTopLevelBlockDivs(lute, tail) >= 2) {
+        const narrowBase = sealPass === 0 ? c.lastTailLen : 0;
+        const L = findSealLenFirstBlockAligned(lute, tail, narrowBase);
+        sealPass++;
+        if (L <= 0) {
+            break;
+        }
+        const sealedMd = tail.slice(0, L);
+        c.sealedHtmlParts.push(await markdownToProtylePreviewHtml(sealedMd));
+        c.sealedLen += L;
+        tail = fullMd.slice(c.sealedLen);
+    }
+
+    c.lastTailLen = tail.length;
+    const tailHtml = await tailMarkdownToHtml(c, tail);
+    return {
+        sealedHtmlParts: c.sealedHtmlParts.slice(),
+        tailHtml,
+        cacheReset,
+    };
 }
 
 /**
@@ -192,6 +278,10 @@ export async function finalizeStreamingMdRemainder(
         map.set(msg, c);
     }
 
+    if (c.remainderFinalized && c.sealedLen === fullMd.length) {
+        return;
+    }
+
     const prevPrefix = c.sealedLen > 0 ? fullMd.slice(0, c.sealedLen) : "";
     if (fullMd.length < c.sealedLen || (c.sealedLen > 0 && !fullMd.startsWith(prevPrefix))) {
         resetCache(c);
@@ -200,16 +290,17 @@ export async function finalizeStreamingMdRemainder(
     const tailMd = fullMd.slice(c.sealedLen);
     if (!tailMd) {
         c.lastTailLen = 0;
+        c.remainderFinalized = true;
+        publishCacheSnapshot(c, fullMd);
         return;
     }
     c.sealedHtmlParts.push(await markdownToProtylePreviewHtml(tailMd));
     c.sealedLen = fullMd.length;
     c.lastTailLen = 0;
+    c.remainderFinalized = true;
+    publishCacheSnapshot(c, fullMd);
 }
 
-/**
- * 更新流式 Markdown 缓存并返回「封存块 + 尾部」HTML，供 DOM 按块增量挂载。
- */
 export async function getStreamingAssistantMdParts(
     msg: ChatMessage,
     fullMd: string,
@@ -223,32 +314,36 @@ export async function getStreamingAssistantMdParts(
         map.set(msg, c);
     }
 
-    const prevPrefix = c.sealedLen > 0 ? fullMd.slice(0, c.sealedLen) : "";
-    if (fullMd.length < c.sealedLen || (c.sealedLen > 0 && !fullMd.startsWith(prevPrefix))) {
-        resetCache(c);
+    if (!c.inflight && c.lastFullMd === fullMd && c.lastParts) {
+        return c.lastParts;
     }
 
-    let tail = fullMd.slice(c.sealedLen);
-    let sealPass = 0;
-    while (countTopLevelBlockDivs(lute, tail) >= 2) {
-        const narrowBase = sealPass === 0 ? c.lastTailLen : 0;
-        const L = findSealLenFirstBlockAligned(lute, tail, narrowBase);
-        sealPass++;
-        if (L <= 0) {
-            break;
-        }
-        const sealedMd = tail.slice(0, L);
-        c.sealedHtmlParts.push(await markdownToProtylePreviewHtml(sealedMd));
-        c.sealedLen += L;
-        tail = fullMd.slice(c.sealedLen);
+    c.pendingFullMd = fullMd;
+    if (!c.inflight) {
+        c.inflight = (async () => {
+            for (;;) {
+                const md = c!.pendingFullMd ?? "";
+                const parts = await computeStreamingMdParts(md, lute, c!);
+                c!.lastFullMd = md;
+                c!.lastParts = parts;
+                if (c!.pendingFullMd === md) {
+                    break;
+                }
+            }
+        })().finally(() => {
+            c!.inflight = undefined;
+        });
+    }
+    await c.inflight;
+
+    if (c.pendingFullMd !== fullMd) {
+        return getStreamingAssistantMdParts(msg, fullMd, lute, kind);
     }
 
-    c.lastTailLen = tail.length;
-
-    const tailHtml = await markdownToProtylePreviewHtml(tail);
-    return {
-        sealedHtmlParts: c.sealedHtmlParts.slice(),
-        tailHtml,
+    return c.lastParts ?? {
+        sealedHtmlParts: [],
+        tailHtml: "",
+        cacheReset: false,
     };
 }
 

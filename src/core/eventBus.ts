@@ -36,6 +36,8 @@ export class EventBus {
 export const agentBus = new EventBus();
 
 export const AgentEvents = {
+    /** pi 式 Agent 生命周期事件（payload 为 AgentEvent） */
+    AGENT_EVENT: "agent:event",
     STREAM_DELTA: "stream:delta",
     TOOL_START: "tool:start",
     TOOL_END: "tool:end",

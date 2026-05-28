@@ -295,6 +295,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 continue;
             }
 
+            const streamingActive = abortCtl !== null;
+            const isStreamingTail =
+                streamingActive && i === visibleMsgs.length - 1 && m.role === "assistant";
+
+            if (streamingActive && !isStreamingTail && m.role === "assistant") {
+                continue;
+            }
+
             if (m.role === "user") {
                 const pre = row.querySelector(".agent-msg__text");
                 if (pre) {
@@ -303,7 +311,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             } else if (m.role === "assistant") {
                 if (lute) {
                     try {
-                        await patchAssistantRow(row, m, lute, abortCtl !== null, isDestroyed);
+                        await patchAssistantRow(row, m, lute, isDestroyed);
                     } catch {
                         patchAssistantRowPlain(row, m);
                     }
@@ -318,7 +326,10 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
 
         if (seq === renderSeq) {
-            elChatBody.scrollTop = elChatBody.scrollHeight;
+            const dist = elChatBody.scrollHeight - elChatBody.scrollTop - elChatBody.clientHeight;
+            if (dist < 120) {
+                elChatBody.scrollTop = elChatBody.scrollHeight;
+            }
         }
     }
 

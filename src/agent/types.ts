@@ -118,6 +118,10 @@ export interface ChatMessage {
     _toolResults?: Record<string, string>;
     /** UI：长时间等待时的提示（如 diff 确认） */
     _toolHint?: Record<string, string>;
+    /** UI：LLM 仍在流式输出本条 assistant（含 tool call JSON 生成） */
+    _streaming?: boolean;
+    /** UI：Markdown 通道仍在流式输出（thinking / text delta，不含 tool call JSON） */
+    _mdStreaming?: boolean;
 }
 
 export type OpenAICompatibleConfig = DeepSeekConfig;

@@ -190,6 +190,32 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+
+  &__fields {
+    margin: 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    font-size: 11px;
+
+    dt {
+      margin: 0;
+      opacity: 0.65;
+      white-space: nowrap;
+    }
+
+    dd {
+      margin: 0;
+      word-break: break-word;
+    }
+  }
+
+  &__field-pre {
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 }
 
 .agent-msg__tools:not(:empty) {

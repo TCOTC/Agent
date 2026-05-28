@@ -1,8 +1,8 @@
-@import "./styles/shell";
-@import "./styles/messages";
-@import "./styles/composer";
-@import "./styles/diff";
-@import "./styles/animations";
+@use "./styles/shell";
+@use "./styles/messages";
+@use "./styles/composer";
+@use "./styles/diff";
+@use "./styles/animations";
 
 .agent-dock-wrap {
   display: flex;
