@@ -5,16 +5,17 @@
 
 ## 一、调研样本与本地代码位置
 
-以下仓库已使用 `git clone --depth 1` 克隆到本工作区 **`plugin/`** 子目录（与仓库名同名），便于离线阅读与对比实现。
+以下仓库已使用 `git clone --depth 1` 克隆到本工作区 **`refer/`** 子目录（与仓库名同名），便于离线阅读与对比实现。
 
 | 仓库 | 本地路径 |
 |------|----------|
-| [Achuan-2/siyuan-plugin-copilot](https://github.com/Achuan-2/siyuan-plugin-copilot) | `plugin/siyuan-plugin-copilot` |
-| [yangtaihong59/siyuan-plugins-mcp-sisyphus](https://github.com/yangtaihong59/siyuan-plugins-mcp-sisyphus) | `plugin/siyuan-plugins-mcp-sisyphus` |
-| [RiviaAzusa/siyuan-agent](https://github.com/RiviaAzusa/siyuan-agent) | `plugin/siyuan-agent` |
-| [yangtaihong59/siyuan-plugins-ai-cli-bridge](https://github.com/yangtaihong59/siyuan-plugins-ai-cli-bridge) | `plugin/siyuan-plugins-ai-cli-bridge` |
-| [DUZSSY/siyuan-ai-assistant](https://github.com/DUZSSY/siyuan-ai-assistant) | `plugin/siyuan-ai-assistant` |
-| [frostime/sy-f-misc](https://github.com/frostime/sy-f-misc) | `plugin/sy-f-misc` |
+| [Achuan-2/siyuan-plugin-copilot](https://github.com/Achuan-2/siyuan-plugin-copilot) | `refer/siyuan-plugin-copilot` |
+| [yangtaihong59/siyuan-plugins-mcp-sisyphus](https://github.com/yangtaihong59/siyuan-plugins-mcp-sisyphus) | `refer/siyuan-plugins-mcp-sisyphus` |
+| [RiviaAzusa/siyuan-agent](https://github.com/RiviaAzusa/siyuan-agent) | `refer/siyuan-agent` |
+| [yangtaihong59/siyuan-plugins-ai-cli-bridge](https://github.com/yangtaihong59/siyuan-plugins-ai-cli-bridge) | `refer/siyuan-plugins-ai-cli-bridge` |
+| [DUZSSY/siyuan-ai-assistant](https://github.com/DUZSSY/siyuan-ai-assistant) | `refer/siyuan-ai-assistant` |
+| [frostime/sy-f-misc](https://github.com/frostime/sy-f-misc) | `refer/sy-f-misc` |
+| [earendil-works/pi](https://github.com/earendil-works/pi) | `refer/pi` |
 
 原始链接列表（与上表一致，便于复制）：
 
