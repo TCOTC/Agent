@@ -30,9 +30,11 @@
     display: block;
     width: 100%;
     box-sizing: border-box;
-    min-height: 72px;
-    max-height: 200px;
-    resize: vertical;
+    field-sizing: content;
+    min-block-size: 1lh;
+    max-block-size: 10lh;
+    resize: none;
+    overflow-y: auto;
     margin: 0;
     padding: 12px 14px 6px;
     font-size: 13px;
@@ -93,15 +95,19 @@
 
   &__footer-end {
     margin-left: auto;
+
+    .agent-context-ring,
+    .agent-composer__submit {
+      flex-shrink: 0;
+      width: 24px;
+      height: 24px;
+    }
   }
 
   &__submit {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
-    width: 24px;
-    height: 24px;
     padding: 0;
     border: none;
     border-radius: 50%;
@@ -130,15 +136,15 @@
   }
 }
 
-// 上下文明细卡片（插入在 input-wrap 之前，对标 Cursor Context 面板）
+// 上下文明细卡片（置于 composer 输入卡片上方，对标 Cursor Context 面板）
 .agent-context-card {
   flex-shrink: 0;
-  margin: 8px 10px 0;
+  margin: 0 0 8px;
   padding: 10px 12px;
   border: 1px solid var(--b3-border-color);
   border-radius: 10px;
-  background: var(--b3-theme-surface);
-  box-shadow: var(--b3-dialog-shadow);
+  background: var(--b3-theme-background);
+  box-shadow: var(--b3-point-shadow);
   font-size: 12px;
   color: var(--b3-theme-on-background);
 
@@ -273,7 +279,7 @@
   }
 }
 
-// 无边框下拉触发器 + 思源菜单（紧凑）
+// 无边框下拉触发器
 .agent-dd {
   position: relative;
   flex-shrink: 0;
@@ -309,89 +315,14 @@
     white-space: nowrap;
     max-width: 160px;
   }
-
-  &__chevron {
-    flex-shrink: 0;
-    font-size: 10px;
-    opacity: 0.55;
-    line-height: 1;
-  }
-
-  // 覆盖思源 b3-menu 的 fixed，锚定在触发器上方
-  .agent-dd-menu.b3-menu {
-    position: absolute;
-    left: 0;
-    bottom: calc(100% + 4px);
-    top: auto;
-    min-width: 188px;
-    max-width: min(280px, 88vw);
-    max-height: min(280px, 46vh);
-    padding: 4px 0;
-    z-index: 80;
-
-    .b3-menu__items {
-      padding: 0 4px;
-      max-height: min(220px, 40vh);
-    }
-
-    .b3-menu__item {
-      line-height: 24px;
-      margin: 0;
-      padding: 0 6px;
-      font-size: 12px;
-      min-height: 24px;
-    }
-
-    .b3-menu__label {
-      min-width: 0;
-      font-size: 12px;
-    }
-
-    .b3-menu__action {
-      width: 18px;
-      height: 18px;
-      padding: 2px;
-      font-size: 11px;
-      line-height: 14px;
-      text-align: center;
-    }
-
-    .b3-menu__separator {
-      margin: 2px 0;
-      height: 1px;
-    }
-
-    .b3-menu__labels {
-      margin: 2px 8px 4px;
-      font-size: 10px;
-      line-height: 16px;
-    }
-  }
-
-  .agent-dd-menu__footer {
-    padding: 0 4px 2px;
-
-    .b3-menu__item {
-      line-height: 28px;
-    }
-  }
 }
 
-// Context ring（上下文环）
-.agent-context-wrap {
-  position: relative;
-  display: inline-flex;
-  align-self: center;
-  flex-shrink: 0;
-}
-
+// Context ring（上下文环，与发送按钮同级）
 .agent-context-ring {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
   padding: 0;
   border: none;
   border-radius: 50%;

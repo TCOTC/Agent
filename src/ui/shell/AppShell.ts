@@ -7,7 +7,7 @@ import {listDeepSeekModels} from "../../agent/deepseekClient";
 import {createFetchSyncKernelExecutor} from "../../agent/kernelExecutor";
 import {ActivityLogBuffer} from "../../core/activityLog";
 import {STORAGE_KEY_ACTIVITY, STORAGE_KEY_SESSIONS, STORAGE_KEY_TOKEN_STATS} from "../../core/constants";
-import {mountComposerDropdown} from "../composer/composerDropdown";
+import {closeAllComposerDropdowns, mountComposerDropdown} from "../composer/composerDropdown";
 import {agentBus, AgentEvents} from "../../core/eventBus";
 import {
     formatTokenBrief,
@@ -116,24 +116,23 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
       <div class="agent-timeline" data-timeline></div>
     </div>
     <div class="agent-composer">
-      <div class="agent-composer__card">
-        <div class="agent-context-card fn__none" data-context-card aria-label="上下文明细">
-          <header class="agent-context-card__head fn__flex">
-            <span class="agent-context-card__title">上下文</span>
-            <button type="button" class="agent-context-card__close" data-context-close title="关闭" aria-label="关闭">×</button>
-          </header>
-          <div class="agent-context-card__meta fn__flex">
-            <span data-context-pct-label></span>
-            <span class="fn__flex-1"></span>
-            <span data-context-token-range></span>
-          </div>
-          <div class="agent-context-card__bar" aria-hidden="true"><span data-context-bar-fill></span></div>
-          <div class="agent-context-card__body" data-context-card-body></div>
+      <div class="agent-context-card fn__none" data-context-card aria-label="上下文明细">
+        <header class="agent-context-card__head fn__flex">
+          <span class="agent-context-card__title">上下文</span>
+          <button type="button" class="agent-context-card__close" data-context-close title="关闭" aria-label="关闭">×</button>
+        </header>
+        <div class="agent-context-card__meta fn__flex">
+          <span data-context-pct-label></span>
+          <span class="fn__flex-1"></span>
+          <span data-context-token-range></span>
         </div>
+        <div class="agent-context-card__bar" aria-hidden="true"><span data-context-bar-fill></span></div>
+        <div class="agent-context-card__body" data-context-card-body></div>
+      </div>
+      <div class="agent-composer__card">
         <div class="agent-composer__input-wrap">
-          <textarea class="agent-composer__input" rows="3" data-input placeholder="Plan, @ for context, / for commands"></textarea>
-          <div class="agent-composer__menu fn__none" data-slash-menu></div>
-          <div class="agent-composer__menu fn__none" data-mention-menu></div>
+          <textarea class="agent-composer__input" rows="1" data-input placeholder="Plan, @ for context, / for commands"></textarea>
+          <div class="agent-composer__menu fn__none" data-composer-menu></div>
         </div>
         <div class="agent-composer__footer">
           <div class="agent-composer__footer-start fn__flex">
@@ -141,20 +140,18 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             <div data-model-dropdown></div>
           </div>
           <div class="agent-composer__footer-end fn__flex">
-            <div class="agent-context-wrap">
-              <button type="button" class="agent-context-ring" data-context-ring title="上下文占用" aria-label="上下文占用" aria-expanded="false">
-                <svg class="agent-context-ring__svg" viewBox="0 0 28 28" aria-hidden="true">
-                  <circle class="agent-context-ring__track" cx="14" cy="14" r="11.5" fill="none"/>
-                  <circle class="agent-context-ring__fill" cx="14" cy="14" r="11.5" fill="none" data-ring-fill/>
-                </svg>
-                <span class="agent-context-ring__pct" data-ring-pct>0</span>
-              </button>
-            </div>
+            <button type="button" class="agent-context-ring" data-context-ring title="上下文占用" aria-label="上下文占用" aria-expanded="false">
+              <svg class="agent-context-ring__svg" viewBox="0 0 28 28" aria-hidden="true">
+                <circle class="agent-context-ring__track" cx="14" cy="14" r="11.5" fill="none"/>
+                <circle class="agent-context-ring__fill" cx="14" cy="14" r="11.5" fill="none" data-ring-fill/>
+              </svg>
+              <span class="agent-context-ring__pct" data-ring-pct>0</span>
+            </button>
             <button type="button" class="agent-composer__submit" data-submit title="发送" aria-label="发送">
-              <svg class="agent-composer__submit-icon" data-submit-icon-send width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+              <svg class="agent-composer__submit-icon" data-submit-icon-send width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
                 <path fill="currentColor" d="M8 3.2 12.8 11H3.2L8 3.2z"/>
               </svg>
-              <svg class="agent-composer__submit-icon fn__none" data-submit-icon-stop width="11" height="11" viewBox="0 0 16 16" aria-hidden="true">
+              <svg class="agent-composer__submit-icon fn__none" data-submit-icon-stop width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
                 <rect fill="currentColor" x="4.5" y="4.5" width="7" height="7" rx="1"/>
               </svg>
             </button>
@@ -193,8 +190,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const elContextTokenRange = root.querySelector("[data-context-token-range]") as HTMLElement;
     const elContextBarFill = root.querySelector("[data-context-bar-fill]") as HTMLElement;
     const btnContextClose = root.querySelector("[data-context-close]") as HTMLButtonElement;
-    const elSlashMenu = root.querySelector("[data-slash-menu]") as HTMLElement;
-    const elMentionMenu = root.querySelector("[data-mention-menu]") as HTMLElement;
+    const elComposerMenu = root.querySelector("[data-composer-menu]") as HTMLElement;
     const btnSubmit = root.querySelector("[data-submit]") as HTMLButtonElement;
     const elSubmitIconSend = root.querySelector("[data-submit-icon-send]") as SVGElement;
     const elSubmitIconStop = root.querySelector("[data-submit-icon-stop]") as SVGElement;
@@ -322,8 +318,12 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     const modeDropdown = mountComposerDropdown<AgentMode>({
         host: elModeDropdown,
+        menuId: "agent-composer-mode",
         ariaLabel: "模式",
-        onOpen: () => closeContextCard(),
+        onOpen: () => {
+            hideMenus();
+            closeContextCard();
+        },
         getValue: () => getActive().mode,
         getOptions: () => AGENT_MODES.map((m) => ({
             value: m.id,
@@ -340,8 +340,12 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     const modelDropdown = mountComposerDropdown<string>({
         host: elModelDropdown,
+        menuId: "agent-composer-model",
         ariaLabel: "模型",
-        onOpen: () => closeContextCard(),
+        onOpen: () => {
+            hideMenus();
+            closeContextCard();
+        },
         getValue: () => getSelectedModel(),
         getOptions: () => {
             const cur = getSelectedModel();
@@ -353,26 +357,25 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             updateContextRing();
             modelDropdown.refresh();
         },
-        renderMenuFooter: (footer) => {
-            const title = document.createElement("div");
-            title.className = "b3-menu__labels";
-            title.textContent = "选项";
-            const row = document.createElement("label");
-            row.className = "b3-menu__item";
-            const label = document.createElement("span");
-            label.className = "fn__flex-center";
-            label.textContent = "思考";
-            const space = document.createElement("span");
-            space.className = "fn__space fn__flex-1";
-            const input = document.createElement("input");
-            input.type = "checkbox";
-            input.className = "b3-switch b3-switch--menu";
-            input.checked = isThinkingEnabled();
-            input.addEventListener("change", () => {
-                persistSettings({thinkingEnabled: input.checked});
+        buildMenuItems: (menu) => {
+            menu.addSeparator();
+            menu.addItem({
+                type: "empty",
+                label: [
+                    "<label class=\"b3-menu__item\">",
+                    "<span class=\"fn__flex-center\">思考</span>",
+                    "<span class=\"fn__space fn__flex-1\"></span>",
+                    "<input type=\"checkbox\" class=\"b3-switch b3-switch--menu\">",
+                    "</label>",
+                ].join(""),
+                bind: (element) => {
+                    const input = element.querySelector("input") as HTMLInputElement;
+                    input.checked = isThinkingEnabled();
+                    input.addEventListener("change", () => {
+                        persistSettings({thinkingEnabled: input.checked});
+                    });
+                },
             });
-            row.append(label, space, input);
-            footer.append(title, row);
         },
     });
 
@@ -863,8 +866,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     };
 
     function hideMenus(): void {
-        elSlashMenu.classList.add("fn__none");
-        elMentionMenu.classList.add("fn__none");
+        elComposerMenu.classList.add("fn__none");
+        elComposerMenu.replaceChildren();
     }
 
     function esc(s: string): string {
@@ -940,8 +943,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     btnContextRing.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        modeDropdown.close();
-        modelDropdown.close();
+        hideMenus();
+        closeAllComposerDropdowns();
         toggleContextCard();
     });
     btnContextClose.addEventListener("click", (ev) => {
@@ -950,7 +953,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     });
     const onShellClick = (ev: MouseEvent) => {
         const t = ev.target as HTMLElement;
-        if (!t.closest(".agent-context-wrap") && !t.closest("[data-context-card]")) {
+        if (!t.closest("[data-context-ring]") && !t.closest("[data-context-card]")) {
             closeContextCard();
         }
     };
@@ -960,23 +963,27 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const v = elInput.value;
         const slash = filterSlashCommands(v);
         if (slash.length) {
-            elSlashMenu.classList.remove("fn__none");
-            elSlashMenu.innerHTML = slash.map((c) =>
+            closeAllComposerDropdowns();
+            elComposerMenu.classList.remove("fn__none");
+            elComposerMenu.innerHTML = slash.map((c) =>
                 `<button type="button" class="agent-menu-item" data-slash="${c.id}"><strong>${c.label}</strong> ${c.hint}</button>`,
             ).join("");
-        } else {
-            elSlashMenu.classList.add("fn__none");
+            return;
         }
         const at = v.match(/@([\w\u4e00-\u9fa5]{1,20})$/);
         if (at) {
             void searchMentionHits(kernel, at[1]).then((hits) => {
-                elMentionMenu.classList.remove("fn__none");
-                elMentionMenu.replaceChildren(renderMentionMenu(hits));
-                elMentionMenu.querySelectorAll("[data-id]").forEach((btn) => {
+                if (filterSlashCommands(elInput.value).length) {
+                    return;
+                }
+                closeAllComposerDropdowns();
+                elComposerMenu.classList.remove("fn__none");
+                elComposerMenu.replaceChildren(renderMentionMenu(hits));
+                elComposerMenu.querySelectorAll("[data-id]").forEach((btn) => {
                     btn.addEventListener("click", () => {
                         const id = (btn as HTMLElement).dataset.id!;
                         const label = btn.querySelector(".agent-mention-menu__label")?.textContent ?? id;
-                        elInput.value = v.replace(/@[\w\u4e00-\u9fa5]{1,20}$/, `@${label}(${id}) `);
+                        elInput.value = elInput.value.replace(/@[\w\u4e00-\u9fa5]{1,20}$/, `@${label}(${id}) `);
                         const s = getActive();
                         s.contextAttachments.push({id, kind: "block", label, addedAt: new Date().toISOString()});
                         persistSessions();
@@ -985,12 +992,12 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                     });
                 });
             });
-        } else {
-            elMentionMenu.classList.add("fn__none");
+            return;
         }
+        hideMenus();
     });
 
-    elSlashMenu.addEventListener("click", (e) => {
+    elComposerMenu.addEventListener("click", (e) => {
         const btn = (e.target as HTMLElement).closest("[data-slash]") as HTMLElement | null;
         if (!btn) {
             return;
@@ -1040,6 +1047,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
         if (ev.key === "Escape") {
             hideMenus();
+            closeAllComposerDropdowns();
             closeContextCard();
         }
     });
