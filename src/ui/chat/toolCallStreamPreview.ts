@@ -27,6 +27,12 @@ const FIELD_LABEL_OVERRIDES: Partial<Record<ToolName, Record<string, string>>> =
         pageSize: "每页条数",
         method: "搜索方式",
     },
+    semantic_search_blocks: {
+        query: "查询",
+        page: "页码",
+        pageSize: "每页条数",
+        paths: "路径限定",
+    },
     list_child_blocks: {parent_id: "父块 ID", limit: "条数上限"},
     get_doc_outline: {id: "文档根块 ID"},
     get_backlinks: {

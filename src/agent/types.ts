@@ -21,6 +21,7 @@ export const TOOL_NAMES = [
     "read_markdown",
     "read_kramdown",
     "search_blocks",
+    "semantic_search_blocks",
     "list_child_blocks",
     "get_doc_outline",
     "get_backlinks",

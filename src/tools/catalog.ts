@@ -52,6 +52,23 @@ export const READ_TOOLS: ToolDefinition[] = [
         source: "builtin",
     },
     {
+        name: "semantic_search_blocks",
+        description:
+            "语义（模糊）搜索块，按查询语句的含义匹配内容；比全文搜索慢，适合概念性查找。库内 blocks 超过 1 万行时插件默认不提供本工具，请改用 search_blocks。",
+        parameters: obj({
+            query: {type: "string", description: "自然语言或短语查询"},
+            page: {type: "integer", default: 1},
+            pageSize: {type: "integer", default: 16},
+            paths: {
+                type: "array",
+                items: {type: "string"},
+                description: "限定路径，如 [\"笔记本ID/文件夹\"]，空数组表示全库",
+            },
+        }, ["query"]),
+        risk: "read",
+        source: "builtin",
+    },
+    {
         name: "list_child_blocks",
         description: "列出父块直接子块 id、type、content 摘要。",
         parameters: obj({

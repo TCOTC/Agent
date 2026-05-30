@@ -4,7 +4,7 @@ import type {AgentLlmFailure} from "./deepseekClient";
 import type {AgentMode} from "./modes";
 import type {AuditEvent, ChatMessage, DeepSeekConfig, KernelExecutor, ToolConfirmRequest} from "./types";
 import type {ContextAttachment} from "../context/types";
-import {createAgentSession, type AgentRunOutcome} from "../core/sdk";
+import {createAgentSession, resolveCreateAgentSessionOptions, type AgentRunOutcome} from "../core/sdk";
 import {syncChatMessagesFromAgent} from "./messageSync";
 import {agentBus, AgentEvents} from "../core/eventBus";
 import type {ThinkingLevel} from "../core/agent/types";
@@ -146,7 +146,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
             );
         };
 
-        session = createAgentSession({
+        const {options: sessionOptions} = await resolveCreateAgentSessionOptions(kernel, {
             plugin: p.plugin,
             kernel,
             mode: p.mode,
@@ -190,6 +190,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
                 p.onMessagesChanged?.();
             },
         });
+        session = createAgentSession(sessionOptions);
 
         p.onRunReady?.({abort: () => session.abort()});
 

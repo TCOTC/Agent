@@ -62,7 +62,16 @@ function defToAgentTool(def: ToolDefinition, ctx: AgentToolsContext): AgentTool 
     };
 }
 
+export interface CreateSiyuanAgentToolsOptions {
+    semanticSearchEnabled?: boolean;
+}
+
 /** 将思源内置 Tool 注册表转为 AgentTool[] */
-export function createSiyuanAgentTools(ctx: AgentToolsContext): AgentTool[] {
-    return getToolDefinitionsForMode(ctx.mode).map((d) => defToAgentTool(d, ctx));
+export function createSiyuanAgentTools(
+    ctx: AgentToolsContext,
+    options?: CreateSiyuanAgentToolsOptions,
+): AgentTool[] {
+    return getToolDefinitionsForMode(ctx.mode, {
+        semanticSearchEnabled: options?.semanticSearchEnabled,
+    }).map((d) => defToAgentTool(d, ctx));
 }

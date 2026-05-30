@@ -26,6 +26,11 @@ import {compactKernelResponseTruncated, truncateToolOutput, wrapToolJson} from "
 import {validateKramdownPayload, verifyBlockExists} from "./kramdownValidate";
 import {checkWorkset, resolveNotebookId, worksetError} from "./worksetGate";
 import {isToolName} from "../agent/types";
+import {
+    BLOCKS_ROW_DISABLE_THRESHOLD,
+    resolveSemanticSearchToolEnabled,
+    SEMANTIC_SEARCH_BLOCKS_TOOL,
+} from "./semanticSearchGate";
 
 const SQL_READONLY = /^\s*(SELECT|WITH|EXPLAIN|VALUES)\b/i;
 
@@ -167,6 +172,29 @@ export async function runTool(
                 page: typeof args.page === "number" ? args.page : 1,
                 pageSize: typeof args.pageSize === "number" ? args.pageSize : 16,
                 method: typeof args.method === "number" ? args.method : 0,
+            });
+            return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
+        }
+
+        if (toolName === SEMANTIC_SEARCH_BLOCKS_TOOL) {
+            const enabled = await resolveSemanticSearchToolEnabled(ctx.kernel);
+            if (!enabled) {
+                return {
+                    text: JSON.stringify({
+                        error: "semantic_search_disabled",
+                        reason: `blocks 表行数超过 ${BLOCKS_ROW_DISABLE_THRESHOLD}，语义搜索过慢已禁用；请使用 search_blocks`,
+                    }),
+                    ok: false,
+                };
+            }
+            const paths = Array.isArray(args.paths)
+                ? args.paths.map((p) => String(p))
+                : [];
+            const r = await ctx.kernel.post("/api/search/semanticSearchBlock", {
+                query: String(args.query ?? ""),
+                paths,
+                page: typeof args.page === "number" ? args.page : 1,
+                pageSize: typeof args.pageSize === "number" ? args.pageSize : 16,
             });
             return {text: compactKernelResponseTruncated(r), ok: r.code === 0};
         }

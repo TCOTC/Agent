@@ -9,6 +9,7 @@ import {agentToChat, chatToAgent, convertToLlm, userMessage} from "./agent/messa
 import type {AgentEvent, AgentMessage, AssistantAgentMessage, ThinkingLevel} from "./agent/types";
 import {createSiyuanAgentTools, type AgentToolsContext} from "../tools/agentTools";
 import {getToolByName, getToolDefinitionsForMode} from "../tools/registry";
+import {resolveSemanticSearchToolEnabled} from "../tools/semanticSearchGate";
 import {assessToolRisk, formatRiskSummary} from "../tools/riskPolicy";
 import type {ToolConfirmInfo, ToolConfirmRequest} from "../agent/types";
 
@@ -31,6 +32,8 @@ export interface CreateAgentSessionOptions {
     onToolUiHint?: (toolCallId: string, hint: string) => void;
     /** 会话内确认 / diff UI 需要刷新 */
     onConfirmUiChange?: () => void;
+    /** 是否暴露 semantic_search_blocks；未传时在 createAgentSession 内异步解析 */
+    semanticSearchEnabled?: boolean;
 }
 
 export interface AgentSession {
@@ -51,6 +54,7 @@ export type AgentRunOutcome =
  * 对齐 pi-coding-agent 的 createAgentSession 架构。
  */
 export function createAgentSession(options: CreateAgentSessionOptions): AgentSession {
+    const semanticSearchEnabled = options.semanticSearchEnabled ?? false;
     const thinkingLevel = options.thinkingLevel ?? "high";
     const systemPrompt = buildModeSystemPrompt(options.mode, {
         customInstructions: options.customInstructions,
@@ -71,7 +75,7 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
         onToolUiHint: options.onToolUiHint,
     };
 
-    const toolDefs = getToolDefinitionsForMode(options.mode);
+    const toolDefs = getToolDefinitionsForMode(options.mode, {semanticSearchEnabled});
     const llmWithTools = {...options.llm, tools: toolDefs};
 
     const agent = new Agent({
@@ -79,7 +83,7 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
             systemPrompt,
             llm: llmWithTools,
             thinkingLevel,
-            tools: createSiyuanAgentTools(toolCtx),
+            tools: createSiyuanAgentTools(toolCtx, {semanticSearchEnabled}),
             messages: options.messages ? chatToAgent(options.messages) : [],
         },
         streamFn: createDeepSeekStreamFn(thinkingLevel),
@@ -148,6 +152,12 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
         },
         toolExecution: "parallel",
     });
+
+    const rebuildTools = (enabled: boolean) => {
+        const defs = getToolDefinitionsForMode(options.mode, {semanticSearchEnabled: enabled});
+        agent.state.llm = {...options.llm, tools: defs};
+        agent.state.tools = createSiyuanAgentTools(toolCtx, {semanticSearchEnabled: enabled});
+    };
 
     let activeAbort: AbortController | null = null;
 
@@ -265,8 +275,8 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
                 attachments: options.attachments,
                 worksetNotebooks: options.worksetNotebookIds,
             });
-            agent.state.llm = llmWithTools;
-            agent.state.tools = createSiyuanAgentTools(toolCtx);
+            const semanticOn = await resolveSemanticSearchToolEnabled(options.kernel);
+            rebuildTools(semanticOn);
 
             const tReq = performance.now();
             options.onAudit({
@@ -301,5 +311,17 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
                 activeAbort = null;
             }
         },
+    };
+}
+
+/** 创建会话前解析语义搜索工具是否可用（blocks 表行数 ≤ 1 万） */
+export async function resolveCreateAgentSessionOptions(
+    kernel: KernelExecutor,
+    options: CreateAgentSessionOptions,
+): Promise<{options: CreateAgentSessionOptions; semanticSearchEnabled: boolean}> {
+    const semanticSearchEnabled = await resolveSemanticSearchToolEnabled(kernel);
+    return {
+        options: {...options, semanticSearchEnabled},
+        semanticSearchEnabled,
     };
 }
