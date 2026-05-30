@@ -35,7 +35,7 @@ export interface ToolRunContext {
     onAudit: (e: AuditEvent) => void;
     requestConfirm: (req: ToolConfirmRequest) => Promise<boolean>;
     worksetNotebookIds: string[];
-    riskAutoApproveMax: number;
+    getRiskAutoApproveMax: () => number;
     showDiffPreview?: (html: string, title: string, toolCallId: string) => Promise<boolean>;
     toolCallId?: string;
     /** 长时间工具步骤的 UI 提示（如等待 diff 确认） */
@@ -63,7 +63,7 @@ async function gateConfirm(
     if (!def) {
         return {proceed: false, riskScore: 100, autoApproved: false};
     }
-    const risk = assessToolRisk(def, args, ctx.riskAutoApproveMax);
+    const risk = assessToolRisk(def, args, ctx.getRiskAutoApproveMax());
     if (ctx.skipRiskGate || risk.autoApprove) {
         return {proceed: true, riskScore: risk.score, autoApproved: ctx.skipRiskGate || risk.autoApprove};
     }
@@ -324,7 +324,7 @@ export async function runTool(
             );
             if (!accepted) {
                 return {
-                    text: JSON.stringify({doc_id: docId, applied: false, reason: "user_rejected"}),
+                    text: JSON.stringify({doc_id: docId, applied: false, reason: "not_executed"}),
                     ok: false,
                 };
             }

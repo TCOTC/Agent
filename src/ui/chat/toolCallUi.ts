@@ -31,8 +31,8 @@ function formatToolResultPreview(name: string, text: string): string {
             return o.ok ? `已聚焦到块 ${String(o.id ?? "")}` : text;
         }
         if (name === "edit_document") {
-            if (o.reason === "user_rejected") {
-                return "用户已在预览中拒绝更改";
+            if (o.reason === "not_executed" || o.reason === "user_rejected") {
+                return "未执行";
             }
             if (o.reason === "no_changes") {
                 return "文档无变更";

@@ -27,7 +27,7 @@ export interface RunAgentLoopParams {
     editorContext?: string;
     attachments?: ContextAttachment[];
     worksetNotebookIds?: string[];
-    riskAutoApproveMax?: number;
+    getRiskAutoApproveMax?: () => number;
     requestConfirm: (req: ToolConfirmRequest) => Promise<boolean>;
     showDiffPreview?: (html: string, title: string, toolCallId: string) => Promise<boolean>;
     /** createAgentSession 完成后回调，供 UI 按会话 id 绑定独立 abort */
@@ -157,7 +157,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<RunAgentLoopO
             editorContext: p.editorContext,
             attachments: p.attachments,
             worksetNotebookIds: p.worksetNotebookIds,
-            riskAutoApproveMax: p.riskAutoApproveMax,
+            getRiskAutoApproveMax: p.getRiskAutoApproveMax,
             requestConfirm: p.requestConfirm,
             showDiffPreview: p.showDiffPreview,
             onAudit: p.onAudit,

@@ -1,6 +1,5 @@
 import type {AgentMode} from "../agent/modes";
 import {emptyUsage} from "../core/tokenUsage";
-import type {ChatMessage} from "../agent/types";
 import type {ChatSession, SessionsPersisted} from "./types";
 
 export function createSession(

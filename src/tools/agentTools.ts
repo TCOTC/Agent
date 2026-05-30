@@ -13,7 +13,7 @@ export interface AgentToolsContext {
     requestConfirm: (req: ToolConfirmRequest) => Promise<boolean>;
     showDiffPreview?: (html: string, title: string, toolCallId: string) => Promise<boolean>;
     worksetNotebookIds: string[];
-    riskAutoApproveMax: number;
+    getRiskAutoApproveMax: () => number;
     /** 工具 UI 提示回调：toolCallId → hint */
     onToolUiHint?: (toolCallId: string, hint: string) => void;
 }
@@ -32,7 +32,7 @@ function defToAgentTool(def: ToolDefinition, ctx: AgentToolsContext): AgentTool 
                 onAudit: ctx.onAudit,
                 requestConfirm: ctx.requestConfirm,
                 worksetNotebookIds: ctx.worksetNotebookIds,
-                riskAutoApproveMax: ctx.riskAutoApproveMax,
+                getRiskAutoApproveMax: ctx.getRiskAutoApproveMax,
                 showDiffPreview: ctx.showDiffPreview,
                 toolCallId,
                 skipRiskGate: true,

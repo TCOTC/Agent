@@ -1,4 +1,4 @@
-import {Setting} from "siyuan";
+import {Setting, showMessage} from "siyuan";
 import type Agent from "../index";
 import {AGENT_MODES} from "../agent/modes";
 import {listDeepSeekModels} from "../agent/deepseekClient";
@@ -10,6 +10,11 @@ import {
 } from "../core/tokenUsage";
 import {defaultSettings, normalizeSettings, STORAGE_KEY_SETTINGS} from "./storage";
 import {SEND_KEY_MODE_OPTIONS} from "./sendKey";
+import {
+    fetchSiyuanEmbeddingFields,
+    saveSiyuanEmbeddingConfig,
+    type SiyuanEmbeddingFields,
+} from "./siyuanAiConfig";
 
 export function attachPluginSettingPanel(plugin: Agent): void {
     const elApiKey = document.createElement("input");
@@ -21,6 +26,9 @@ export function attachPluginSettingPanel(plugin: Agent): void {
     const elRisk = document.createElement("input");
     const elContextLimit = document.createElement("input");
     const elSendKeyMode = document.createElement("select");
+    const elEmbeddingModel = document.createElement("input");
+    const elEmbeddingBaseURL = document.createElement("input");
+    const elEmbeddingApiKey = document.createElement("input");
     elThinking.type = "checkbox";
     elRisk.type = "number";
     elContextLimit.type = "number";
@@ -63,6 +71,19 @@ export function attachPluginSettingPanel(plugin: Agent): void {
         } catch {
             elModel.innerHTML = `<option>${s.model}</option>`;
             syncContextLimitField();
+        }
+    };
+
+    const syncEmbeddingFields = (fields: SiyuanEmbeddingFields) => {
+        elEmbeddingModel.value = fields.embeddingModel;
+        elEmbeddingBaseURL.value = fields.embeddingBaseURL;
+        elEmbeddingApiKey.value = fields.embeddingAPIKey;
+    };
+
+    const refreshEmbeddingConfig = async () => {
+        const fields = await fetchSiyuanEmbeddingFields();
+        if (fields) {
+            syncEmbeddingFields(fields);
         }
     };
 
@@ -113,8 +134,17 @@ export function attachPluginSettingPanel(plugin: Agent): void {
                 modelContextLimits: limits,
                 sendKeyMode: elSendKeyMode.value,
             });
-            void plugin.saveData(STORAGE_KEY_SETTINGS, s);
-            plugin.data[STORAGE_KEY_SETTINGS] = s;
+            void plugin.persistPluginSettings(s);
+            void (async () => {
+                const embedResult = await saveSiyuanEmbeddingConfig({
+                    embeddingModel: elEmbeddingModel.value,
+                    embeddingBaseURL: elEmbeddingBaseURL.value,
+                    embeddingAPIKey: elEmbeddingApiKey.value,
+                });
+                if (!embedResult.ok) {
+                    showMessage(`嵌入模型配置未保存：${embedResult.msg}`, 5000, "error");
+                }
+            })();
         },
     });
 
@@ -150,6 +180,31 @@ export function attachPluginSettingPanel(plugin: Agent): void {
             syncContextLimitField();
             return elContextLimit;
         },
+    });
+
+    elEmbeddingModel.className = "b3-text-field fn__block";
+    plugin.setting.addItem({
+        title: "嵌入模型",
+        description: "思源内核块向量索引所用模型名（如 text-embedding-3-small）。写入「设置 → 人工智能」。",
+        createActionElement: () => {
+            void refreshEmbeddingConfig();
+            return elEmbeddingModel;
+        },
+    });
+
+    elEmbeddingBaseURL.className = "b3-text-field fn__block";
+    plugin.setting.addItem({
+        title: "嵌入 API Base URL",
+        description: "OpenAI 兼容嵌入接口地址；留空时由内核按环境变量或默认逻辑处理。",
+        createActionElement: () => elEmbeddingBaseURL,
+    });
+
+    elEmbeddingApiKey.type = "password";
+    elEmbeddingApiKey.className = "b3-text-field fn__block";
+    plugin.setting.addItem({
+        title: "嵌入 API Key",
+        description: "可与对话 API Key 不同；留空时尝试 SIYUAN_OPENAI_EMBEDDING_API_KEY 环境变量。",
+        createActionElement: () => elEmbeddingApiKey,
     });
 
     plugin.setting.addItem({
@@ -213,7 +268,7 @@ export function attachPluginSettingPanel(plugin: Agent): void {
     elRisk.className = "b3-text-field fn__block";
     plugin.setting.addItem({
         title: "自动放行风险分上限",
-        description: "0–100，低于等于此分的写操作可自动执行（默认 35）。",
+        description: "0–100。风险分 ≤ 此值可自动执行，> 此值需确认（默认 35）。删除等高基础分操作在阈值较低时仍会要求确认。",
         createActionElement: () => {
             elRisk.value = String((plugin.data[STORAGE_KEY_SETTINGS] as typeof defaultSettings).riskAutoApproveMax);
             return elRisk;

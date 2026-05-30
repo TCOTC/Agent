@@ -127,7 +127,6 @@ export const STRUCTURE_TOOLS: ToolDefinition[] = [
         description: "只读 SQL（SELECT/WITH/EXPLAIN/VALUES）。",
         parameters: obj({stmt: {type: "string"}}, ["stmt"]),
         risk: "sql",
-        alwaysConfirm: true,
         source: "builtin",
     },
 ];
@@ -297,7 +296,6 @@ export const WRITE_TOOLS: ToolDefinition[] = [
             id: {type: "string", description: "文档根块 ID"},
         }, ["id"]),
         risk: "delete",
-        alwaysConfirm: true,
         source: "builtin",
     },
     {
@@ -316,7 +314,6 @@ export const WRITE_TOOLS: ToolDefinition[] = [
         description: "删除单个块。删 2+ 块请用 batch_delete_blocks。",
         parameters: obj({id: {type: "string"}}, ["id"]),
         risk: "delete",
-        alwaysConfirm: true,
         source: "builtin",
     },
     {
@@ -330,7 +327,6 @@ export const WRITE_TOOLS: ToolDefinition[] = [
             },
         }, ["ids"]),
         risk: "delete",
-        alwaysConfirm: true,
         source: "builtin",
     },
 ];

@@ -23,7 +23,7 @@ export interface CreateAgentSessionOptions {
     editorContext?: string;
     attachments?: ContextAttachment[];
     worksetNotebookIds?: string[];
-    riskAutoApproveMax?: number;
+    getRiskAutoApproveMax?: () => number;
     requestConfirm: (req: ToolConfirmRequest) => Promise<boolean>;
     showDiffPreview?: (html: string, title: string, toolCallId: string) => Promise<boolean>;
     onAudit: (e: AuditEvent) => void;
@@ -67,7 +67,7 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
         requestConfirm: options.requestConfirm,
         showDiffPreview: options.showDiffPreview,
         worksetNotebookIds: options.worksetNotebookIds ?? [],
-        riskAutoApproveMax: options.riskAutoApproveMax ?? 35,
+        getRiskAutoApproveMax: options.getRiskAutoApproveMax ?? (() => 35),
         onToolUiHint: options.onToolUiHint,
     };
 
@@ -92,7 +92,11 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
             if (!def) {
                 return {block: true, reason: `未知工具：${ctx.toolCall.name}`};
             }
-            const risk = assessToolRisk(def, ctx.args as Record<string, unknown>, toolCtx.riskAutoApproveMax);
+            const risk = assessToolRisk(
+                def,
+                ctx.args as Record<string, unknown>,
+                toolCtx.getRiskAutoApproveMax(),
+            );
             if (risk.autoApprove) {
                 return undefined;
             }
@@ -125,13 +129,9 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
                 detail,
             });
             if (asst?._toolConfirm?.[ctx.toolCall.id]) {
-                if (approved) {
-                    const next = {...asst._toolConfirm};
-                    delete next[ctx.toolCall.id];
-                    asst._toolConfirm = Object.keys(next).length ? next : undefined;
-                } else {
-                    asst._toolConfirm[ctx.toolCall.id] = {...confirmInfo, status: "rejected"};
-                }
+                const next = {...asst._toolConfirm};
+                delete next[ctx.toolCall.id];
+                asst._toolConfirm = Object.keys(next).length ? next : undefined;
             }
             options.onConfirmUiChange?.();
             options.onAudit({kind: "tool_confirm_result", name: ctx.toolCall.name, approved});
@@ -141,7 +141,7 @@ export function createAgentSession(options: CreateAgentSessionOptions): AgentSes
             if (!approved) {
                 return {
                     block: true,
-                    reason: signal?.aborted ? "操作已取消" : "用户拒绝执行",
+                    reason: signal?.aborted ? "操作已取消" : "未执行",
                 };
             }
             return undefined;

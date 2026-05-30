@@ -9,8 +9,5 @@ export const STORAGE_KEY_ACTIVITY = "activity.jsonl";
 export const STORAGE_KEY_TOKEN_STATS = "token-stats.json";
 export const STORAGE_KEY_SESSIONS = "sessions.json";
 
-/** 自动放行风险分上限（0–100，越高越危险） */
+/** 自动放行风险分上限（0–100，越高越危险；与设置项 riskAutoApproveMax 默认值一致） */
 export const RISK_AUTO_APPROVE_MAX = 35;
-
-/** 必须用户确认的风险分下限 */
-export const RISK_MUST_CONFIRM_MIN = 72;

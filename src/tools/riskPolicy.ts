@@ -79,8 +79,9 @@ export function assessToolRisk(
     }
 
     score = Math.min(100, Math.max(0, score));
-    const mustConfirm = tool.alwaysConfirm || tool.risk === "delete" || score >= 72;
-    const autoApprove = !mustConfirm && score <= autoApproveMax;
+    // 仅按用户「自动放行风险分上限」判定；alwaysConfirm（默认 false，预留按工具始终确认）
+    const mustConfirm = Boolean(tool.alwaysConfirm) || score > autoApproveMax;
+    const autoApprove = !mustConfirm;
 
     return {score, reasons, mustConfirm, autoApprove};
 }

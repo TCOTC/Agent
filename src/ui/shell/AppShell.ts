@@ -27,6 +27,8 @@ import {
     sortSessions,
 } from "../../session/storage";
 import type {ChatSession, SessionsPersisted} from "../../session/types";
+import {reapplyPendingRiskConfirms} from "../../settings/reapplyRiskConfirms";
+import {subscribeSettingsChange} from "../../settings/settingsNotify";
 import {normalizeSettings, STORAGE_KEY_SETTINGS} from "../../settings/storage";
 import {getSendKeyHintHtml, handleComposerEnterKey} from "../../settings/sendKey";
 import type {PersistedSettings} from "../../settings/types";
@@ -253,9 +255,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const isThinkingEnabled = () => getSettings().thinkingEnabled !== false;
 
     const persistSettings = (patch: Partial<PersistedSettings>) => {
-        const s = {...getSettings(), ...patch};
-        plugin.data[STORAGE_KEY_SETTINGS] = s;
-        void plugin.saveData(STORAGE_KEY_SETTINGS, s);
+        void plugin.persistPluginSettings({...getSettings(), ...patch});
     };
 
     const isDestroyed = () => destroyed;
@@ -540,7 +540,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 modeDropdown.refresh();
                 modelDropdown.refresh();
                 updateSessionTitle();
-                void renderMessages();
+                void renderMessages({scrollToEnd: true});
                 resumeStreamRenderIfNeeded();
                 updateContextRing();
             });
@@ -664,26 +664,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     });
 
     bindInlineToolActionHandlers({
-        onConfirm: (sessionId, toolCallId, approved) => {
-            const aborted = getSessionRunSignal(sessionId)?.aborted === true;
+        onConfirm: (sessionId, toolCallId, _approved) => {
             const chatAsst = findLatestAssistantMessage(getAgentSyncMessages(sessionId));
             if (!chatAsst?._toolConfirm?.[toolCallId]) {
                 return;
             }
-            if (approved) {
-                const next = {...chatAsst._toolConfirm};
-                delete next[toolCallId];
-                chatAsst._toolConfirm = Object.keys(next).length ? next : undefined;
-            } else if (aborted) {
-                const next = {...chatAsst._toolConfirm};
-                delete next[toolCallId];
-                chatAsst._toolConfirm = Object.keys(next).length ? next : undefined;
-            } else {
-                chatAsst._toolConfirm[toolCallId] = {
-                    ...chatAsst._toolConfirm[toolCallId],
-                    status: "rejected",
-                };
-            }
+            const next = {...chatAsst._toolConfirm};
+            delete next[toolCallId];
+            chatAsst._toolConfirm = Object.keys(next).length ? next : undefined;
             refreshInlineActionUi(sessionId);
         },
         onDiff: (sessionId, toolCallId, approved) => {
@@ -706,7 +694,15 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         elMessages.querySelector(".agent-empty")?.remove();
     }
 
-    async function renderMessages(): Promise<void> {
+    const scrollChatToEnd = () => {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                elChatBody.scrollTop = elChatBody.scrollHeight;
+            });
+        });
+    };
+
+    async function renderMessages(options?: {scrollToEnd?: boolean}): Promise<void> {
         if (destroyed) {
             return;
         }
@@ -786,9 +782,13 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
 
         if (seq === renderSeq) {
-            const dist = elChatBody.scrollHeight - elChatBody.scrollTop - elChatBody.clientHeight;
-            if (dist < 120) {
-                elChatBody.scrollTop = elChatBody.scrollHeight;
+            if (options?.scrollToEnd) {
+                scrollChatToEnd();
+            } else {
+                const dist = elChatBody.scrollHeight - elChatBody.scrollTop - elChatBody.clientHeight;
+                if (dist < 120) {
+                    scrollChatToEnd();
+                }
             }
         }
     }
@@ -1007,7 +1007,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 },
                 customInstructions: [settings.customInstructions, sess.customInstructions].filter(Boolean).join("\n"),
                 worksetNotebookIds: settings.worksetNotebookIds,
-                riskAutoApproveMax: settings.riskAutoApproveMax,
+                getRiskAutoApproveMax: () => getSettings().riskAutoApproveMax,
                 requestConfirm: createInlineToolConfirm(
                     sendSessionId,
                     () => scheduleStreamRender(sendSessionId),
@@ -1225,13 +1225,25 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     const offMessages = agentBus.on(AgentEvents.MESSAGES_RENDER, () => scheduleStreamRenderForAllRuns());
     const offStream = agentBus.on(AgentEvents.STREAM_DELTA, () => scheduleStreamRenderForAllRuns());
+    const offSettingsChange = subscribeSettingsChange((settings) => {
+        if (reapplyPendingRiskConfirms(sessions, settings.riskAutoApproveMax)) {
+            persistSessions();
+            scheduleStreamRenderForAllRuns();
+        }
+    });
+
+    void (async () => {
+        if (reapplyPendingRiskConfirms(sessions, getSettings().riskAutoApproveMax)) {
+            await renderMessages();
+        }
+    })();
 
     modeDropdown.refresh();
     renderSessionList();
     updateSessionTitle();
     updateContextRing();
     void loadModels();
-    void renderMessages();
+    void renderMessages({scrollToEnd: true});
 
     const cleanup = () => {
         destroyed = true;
@@ -1260,6 +1272,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         root.removeEventListener("click", onShellClick);
         offMessages();
         offStream();
+        offSettingsChange();
         if (activityFlushTimer !== null) {
             clearTimeout(activityFlushTimer);
             activityFlushTimer = null;

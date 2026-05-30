@@ -3,7 +3,9 @@ import "./index.scss";
 import {mountAgentPanel} from "./ui/dock/panel";
 import {destroyCachedLute} from "./render/lute";
 import {normalizeSettings, STORAGE_KEY_SETTINGS} from "./settings/storage";
+import {notifySettingsChange} from "./settings/settingsNotify";
 import {attachPluginSettingPanel} from "./settings/settingPanel";
+import type {PersistedSettings} from "./settings/types";
 import {STORAGE_KEY_SESSIONS} from "./core/constants";
 import {normalizeSessions} from "./session/storage";
 import {installConfirmVisibilityListener} from "./ui/notify/desktopNotify";
@@ -19,6 +21,14 @@ export default class Agent extends Plugin {
 
     showPluginMessage(text: string, timeout?: number, type?: "info" | "error", id?: string): void {
         showMessage(`[Agent] ${text}`, timeout, type, id);
+    }
+
+    /** 写入内存并持久化设置；本地保存后立即通知 UI（不必等同步触发的 onDataChanged） */
+    async persistPluginSettings(next: PersistedSettings): Promise<void> {
+        const s = normalizeSettings(next);
+        this.data[STORAGE_KEY_SETTINGS] = s;
+        await this.saveData(STORAGE_KEY_SETTINGS, s);
+        notifySettingsChange(s);
     }
 
     private async refreshPluginDataFromStorage(): Promise<void> {
@@ -91,9 +101,13 @@ export default class Agent extends Plugin {
     }
 
     onDataChanged() {
-        void this.refreshPluginDataFromStorage().catch((e) => {
-            logger.error("onDataChanged:", e);
-        });
+        void this.refreshPluginDataFromStorage()
+            .then(() => {
+                notifySettingsChange(normalizeSettings(this.data[STORAGE_KEY_SETTINGS]));
+            })
+            .catch((e) => {
+                logger.error("onDataChanged:", e);
+            });
     }
 
     onunload() {

@@ -11,6 +11,7 @@ export interface ToolDefinition {
     description: string;
     parameters: Record<string, unknown>;
     risk: ToolRisk;
+    /** 为 true 时可在分数高于用户自动放行上限时仍要求确认；默认 false，后续或支持用户配置 */
     alwaysConfirm?: boolean;
     source: ToolSource;
 }
