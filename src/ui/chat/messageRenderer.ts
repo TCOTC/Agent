@@ -26,6 +26,52 @@ type Patch = {
     thinkingMdOpen: boolean;
 };
 
+type ThinkDetailsEl = HTMLDetailsElement & {_agentThinkSuppress?: boolean};
+
+function ensureThinkDetailsBehavior(think: ThinkDetailsEl): void {
+    if (think.dataset.thinkBound) {
+        return;
+    }
+    think.dataset.thinkBound = "1";
+    think.addEventListener("toggle", () => {
+        if (think._agentThinkSuppress) {
+            return;
+        }
+        think.dataset.thinkUserToggle = "1";
+    });
+}
+
+function setThinkDetailsOpen(think: ThinkDetailsEl, open: boolean): void {
+    if (think.open === open) {
+        return;
+    }
+    think._agentThinkSuppress = true;
+    think.open = open;
+    think._agentThinkSuppress = false;
+}
+
+/** 思考阶段流式输出时展开；thinking_end 后自动折叠；历史消息默认折叠，用户手动展开后保持 */
+function syncThinkDetailsOpen(
+    think: ThinkDetailsEl,
+    opts: {thinkingMdOpen: boolean; thinkingEnd: boolean; hasReasoning: boolean},
+): void {
+    ensureThinkDetailsBehavior(think);
+    if (!opts.hasReasoning) {
+        return;
+    }
+    if (opts.thinkingMdOpen) {
+        setThinkDetailsOpen(think, true);
+        return;
+    }
+    if (opts.thinkingEnd) {
+        setThinkDetailsOpen(think, false);
+        return;
+    }
+    if (!think.dataset.thinkUserToggle) {
+        setThinkDetailsOpen(think, false);
+    }
+}
+
 export function buildUserMessageRow(): HTMLElement {
     const row = document.createElement("article");
     row.className = "agent-msg agent-msg--user";
@@ -51,7 +97,7 @@ export function buildToolResultRow(m: ChatMessage): HTMLElement {
 export function buildAssistantRow(): HTMLElement {
     const row = document.createElement("article");
     row.className = "agent-msg agent-msg--assistant";
-    row.innerHTML = `<details class="agent-msg__think" open>
+    row.innerHTML = `<details class="agent-msg__think">
   <summary>思考</summary>
   <div class="agent-msg__reasoning b3-typography b3-typography--default"></div>
 </details>
@@ -101,6 +147,11 @@ export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
     const reasoningRaw = m.reasoning_content ? String(m.reasoning_content) : "";
     if (think) {
         think.hidden = !reasoningRaw;
+        syncThinkDetailsOpen(think as ThinkDetailsEl, {
+            thinkingMdOpen: false,
+            thinkingEnd: false,
+            hasReasoning: !!reasoningRaw,
+        });
     }
     if (reasoningHost) {
         reasoningHost.textContent = reasoningRaw;
@@ -228,7 +279,8 @@ export async function patchAssistantRow(
         prev.hintSig === hintSig &&
         prev.confirmSig === confirmSig &&
         prev.diffSig === diffSig &&
-        prev.streamOpen === mdStreaming
+        prev.streamOpen === mdStreaming &&
+        prev.thinkingMdOpen === thinkingMdOpen
     ) {
         return;
     }
@@ -245,9 +297,16 @@ export async function patchAssistantRow(
         thinkingMdOpen,
     };
 
+    const thinkingEnd = prev != null && prev.thinkingMdOpen && !thinkingMdOpen;
+
     const think = row.querySelector(".agent-msg__think") as HTMLDetailsElement | null;
     if (think) {
         think.hidden = !reasoningRaw;
+        syncThinkDetailsOpen(think as ThinkDetailsEl, {
+            thinkingMdOpen,
+            thinkingEnd,
+            hasReasoning: !!reasoningRaw,
+        });
     }
 
     patchAssistantTooling(row, m);
@@ -270,7 +329,6 @@ export async function patchAssistantRow(
     }
 
     const needStreamFinalize = prev != null && prev.streamOpen && !mdStreaming;
-    const thinkingEnd = prev != null && prev.thinkingMdOpen && !thinkingMdOpen;
     const reasoningChanged = !prev || prev.reasoning !== reasoningRaw;
     const contentChanged = !prev || prev.content !== contentRaw;
 

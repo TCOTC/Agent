@@ -64,12 +64,21 @@ export function createDeepSeekStreamFn(thinkingLevel: ThinkingLevel): StreamFn {
             let started = false;
             let textStarted = false;
             let thinkStarted = false;
+            let thinkEnded = false;
             let toolcallStarted = false;
             let lastPartial: AssistantAgentMessage = {...base};
 
             const emitPartial = (partial: AssistantAgentMessage, event: AssistantMessageEvent) => {
                 lastPartial = partial;
                 stream.push(event);
+            };
+
+            const endThinkingIfOpen = (partial: AssistantAgentMessage) => {
+                if (!thinkStarted || thinkEnded) {
+                    return;
+                }
+                thinkEnded = true;
+                emitPartial(partial, {type: "thinking_end", partial: {...partial}});
             };
 
             const completion = await deepseekChatCompletion(
@@ -84,19 +93,9 @@ export function createDeepSeekStreamFn(thinkingLevel: ThinkingLevel): StreamFn {
                         emitPartial(partial, {type: "start", partial: {...partial}});
                     }
 
-                    const contentDelta = snap.content.slice(prevContent.length);
-                    if (contentDelta) {
-                        if (!textStarted) {
-                            textStarted = true;
-                            emitPartial(partial, {type: "text_start", partial: {...partial}});
-                        }
-                        emitPartial(partial, {type: "text_delta", partial: {...partial}, delta: contentDelta});
-                        prevContent = snap.content;
-                    }
-
                     const reasoning = snap.reasoning_content ?? "";
                     const reasoningDelta = reasoning.slice(prevReasoning.length);
-                    if (reasoningDelta) {
+                    if (reasoningDelta && !thinkEnded) {
                         if (!thinkStarted) {
                             thinkStarted = true;
                             emitPartial(partial, {type: "thinking_start", partial: {...partial}});
@@ -109,7 +108,19 @@ export function createDeepSeekStreamFn(thinkingLevel: ThinkingLevel): StreamFn {
                         prevReasoning = reasoning;
                     }
 
+                    const contentDelta = snap.content.slice(prevContent.length);
+                    if (contentDelta) {
+                        endThinkingIfOpen(partial);
+                        if (!textStarted) {
+                            textStarted = true;
+                            emitPartial(partial, {type: "text_start", partial: {...partial}});
+                        }
+                        emitPartial(partial, {type: "text_delta", partial: {...partial}, delta: contentDelta});
+                        prevContent = snap.content;
+                    }
+
                     if (snap.tool_calls?.length) {
+                        endThinkingIfOpen(partial);
                         if (!toolcallStarted) {
                             toolcallStarted = true;
                             emitPartial(partial, {type: "toolcall_start", partial: {...partial}});
@@ -129,7 +140,7 @@ export function createDeepSeekStreamFn(thinkingLevel: ThinkingLevel): StreamFn {
                 if (textStarted) {
                     stream.push({type: "text_end", partial: {...failed}});
                 }
-                if (thinkStarted) {
+                if (thinkStarted && !thinkEnded) {
                     stream.push({type: "thinking_end", partial: {...failed}});
                 }
                 stream.push({type: "error", partial: failed, errorMessage});
@@ -150,7 +161,7 @@ export function createDeepSeekStreamFn(thinkingLevel: ThinkingLevel): StreamFn {
             if (textStarted) {
                 stream.push({type: "text_end", partial: {...finalMsg}});
             }
-            if (thinkStarted) {
+            if (thinkStarted && !thinkEnded) {
                 stream.push({type: "thinking_end", partial: {...finalMsg}});
             }
             if (finalMsg.tool_calls?.length) {
