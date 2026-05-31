@@ -41,15 +41,19 @@
   }
 }
 
-// —— 顶栏 ——
-.agent-header {
+// —— 顶栏（与右轨 head 共用行高；对齐思源 layout-tab-bar：29 + 6×2） ——
+%agent-chrome-head {
   align-items: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 0 8px 0 14px;
+  min-height: 41px;
+}
+
+.agent-header {
+  @extend %agent-chrome-head;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 8px 0 12px;
-  min-height: 40px;
-  border-bottom: 1px solid var(--b3-border-color);
-  flex-shrink: 0;
   background: var(--b3-theme-background);
 
   &__start {
@@ -199,11 +203,8 @@
   }
 
   &__head {
-    padding: 8px 8px 6px;
-    align-items: center;
+    @extend %agent-chrome-head;
     gap: 4px;
-    border-bottom: 1px solid var(--b3-border-color);
-    flex-shrink: 0;
   }
 
   &__title {

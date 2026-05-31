@@ -236,6 +236,51 @@ export async function listDeepSeekModels(cfg: Pick<DeepSeekConfig, "baseUrl" | "
     return Array.isArray(json.data) ? json.data : [];
 }
 
+/** 非流式短回复（用于会话标题等），关闭思考模式 */
+export async function deepseekTitleCompletion(
+    cfg: Pick<DeepSeekConfig, "baseUrl" | "apiKey" | "model">,
+    systemPrompt: string,
+    userPrompt: string,
+    signal?: AbortSignal,
+): Promise<string | null> {
+    const url = joinUrl(cfg.baseUrl, "chat/completions");
+    let res: Response;
+    try {
+        res = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${cfg.apiKey}`,
+            },
+            body: JSON.stringify({
+                model: cfg.model,
+                messages: [
+                    {role: "system", content: systemPrompt},
+                    {role: "user", content: userPrompt},
+                ],
+                stream: false,
+                max_tokens: 48,
+                thinking: {type: "disabled"},
+            }),
+            signal,
+        });
+    } catch {
+        return null;
+    }
+    if (!res.ok) {
+        return null;
+    }
+    try {
+        const json = (await res.json()) as {
+            choices?: Array<{message?: {content?: string | null}}>;
+        };
+        const content = json.choices?.[0]?.message?.content;
+        return typeof content === "string" ? content : null;
+    } catch {
+        return null;
+    }
+}
+
 export async function deepseekChatCompletion(
     cfg: DeepSeekConfig,
     messages: ChatMessage[],
