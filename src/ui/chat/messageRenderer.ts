@@ -7,6 +7,11 @@ import {
     syncAssistantContentDom,
     syncAssistantReasoningDom,
 } from "../../render/streamingDom";
+import {
+    detachAssistantActions,
+    ensureAssistantRowChromeOrder,
+    mountAssistantActions,
+} from "./assistantRowChrome";
 import {readSessionIdFromMessagesEl} from "./inlineToolActions";
 import {renderAssistantConfirmBanner} from "./toolConfirmBanner";
 import {renderAssistantToolCalls} from "./toolCallUi";
@@ -102,13 +107,7 @@ export function buildAssistantRow(): HTMLElement {
   <div class="agent-msg__reasoning b3-typography b3-typography--default"></div>
 </details>
 <div class="agent-msg__body b3-typography b3-typography--default"></div>
-<div class="agent-msg__tools"></div>
-<div class="agent-msg__confirms" hidden aria-live="polite"></div>
-<div class="agent-msg__actions">
-  <button type="button" class="agent-msg__action" data-copy-md title="复制 Markdown">复制</button>
-  <button type="button" class="agent-msg__action" data-export-assistant title="导出对话" hidden>导出</button>
-  <button type="button" class="agent-msg__action" data-regenerate-assistant title="重新生成" hidden>重新生成</button>
-</div>`;
+<div class="agent-msg__tools"></div>`;
     return row;
 }
 
@@ -140,7 +139,11 @@ function toolCallsSig(m: ChatMessage, llmStreaming: boolean): string {
     return m.tool_calls.map((t) => `${t.id}:${t.function.name}`).join(",");
 }
 
-export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
+export function patchAssistantRowPlain(
+    row: HTMLElement,
+    m: ChatMessage,
+    options: PatchAssistantRowOptions = {},
+): void {
     const think = row.querySelector(".agent-msg__think") as HTMLDetailsElement | null;
     const reasoningHost = row.querySelector(".agent-msg__reasoning") as HTMLElement | null;
     const bodyEl = row.querySelector(".agent-msg__body") as HTMLElement | null;
@@ -160,14 +163,7 @@ export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
         bodyEl.textContent = m.content ?? "";
     }
     patchAssistantTooling(row, m);
-    const regenBtn = row.querySelector("[data-regenerate-assistant]") as HTMLButtonElement | null;
-    if (regenBtn) {
-        regenBtn.hidden = false;
-    }
-    const exportBtn = row.querySelector("[data-export-assistant]") as HTMLButtonElement | null;
-    if (exportBtn) {
-        exportBtn.hidden = false;
-    }
+    syncAssistantActionsVisibility(row, m, options.showActions === true);
 }
 
 export interface PatchAssistantToolingOptions {
@@ -183,11 +179,66 @@ export function bindAssistantConfirmNotify(
     confirmNotifyHandler = handler;
 }
 
-function ensureConfirmsAfterTools(row: HTMLElement): void {
-    const tools = row.querySelector(".agent-msg__tools");
-    const confirms = row.querySelector(".agent-msg__confirms");
-    if (tools && confirms && confirms.previousElementSibling !== tools) {
-        tools.after(confirms);
+/** 当前用户轮次内，该条是否为最后一条 assistant（其后无 assistant，直至下一条 user 或列表末尾） */
+export function isRoundTailAssistant(visibleMsgs: ChatMessage[], index: number): boolean {
+    if (visibleMsgs[index]?.role !== "assistant") {
+        return false;
+    }
+    for (let j = index + 1; j < visibleMsgs.length; j++) {
+        if (visibleMsgs[j].role === "user") {
+            return true;
+        }
+        if (visibleMsgs[j].role === "assistant") {
+            return false;
+        }
+    }
+    return true;
+}
+
+function bindCopyAction(actions: HTMLElement, m: ChatMessage): void {
+    const copyBtn = actions.querySelector("[data-copy-md]");
+    if (copyBtn && !copyBtn.hasAttribute("data-bound")) {
+        copyBtn.setAttribute("data-bound", "1");
+        copyBtn.addEventListener("click", () => {
+            void navigator.clipboard.writeText(m.content ?? "");
+        });
+    }
+}
+
+/** 复制 / 导出 / 重新生成仅出现在当前用户轮次末尾，且不在流式输出中 */
+export function syncAssistantActionsVisibility(
+    row: HTMLElement,
+    m: ChatMessage,
+    showActions: boolean,
+): void {
+    const streaming = m._mdStreaming === true || m._streaming === true;
+    const visible = showActions && !streaming;
+
+    if (!visible) {
+        detachAssistantActions(row);
+        ensureAssistantRowChromeOrder(row);
+        return;
+    }
+
+    const actions = mountAssistantActions(row);
+    bindCopyAction(actions, m);
+    ensureAssistantRowChromeOrder(row);
+}
+
+export function syncAllAssistantActionsVisibility(
+    visibleMsgs: ChatMessage[],
+    rowByMessage: WeakMap<ChatMessage, HTMLElement>,
+): void {
+    for (let i = 0; i < visibleMsgs.length; i++) {
+        const m = visibleMsgs[i];
+        if (m.role !== "assistant") {
+            continue;
+        }
+        const row = rowByMessage.get(m);
+        if (!row) {
+            continue;
+        }
+        syncAssistantActionsVisibility(row, m, isRoundTailAssistant(visibleMsgs, i));
     }
 }
 
@@ -197,7 +248,7 @@ export function patchAssistantTooling(
     m: ChatMessage,
     options: PatchAssistantToolingOptions = {},
 ): void {
-    ensureConfirmsAfterTools(row);
+    ensureAssistantRowChromeOrder(row);
     const sessionId = options.sessionId ?? readSessionIdFromMessagesEl(row);
     const onNotify = options.onConfirmNotify ?? confirmNotifyHandler;
     renderAssistantConfirmBanner(row, m, {sessionId, onNotify});
@@ -251,11 +302,17 @@ export function patchAssistantToolCallsOnly(row: HTMLElement, m: ChatMessage): v
     patchAssistantTooling(row, m);
 }
 
+export interface PatchAssistantRowOptions {
+    /** 是否为当前用户轮次内最后一条 assistant 消息 */
+    showActions?: boolean;
+}
+
 export async function patchAssistantRow(
     row: HTMLElement,
     m: ChatMessage,
     lute: LuteEngine,
     destroyed: () => boolean,
+    options: PatchAssistantRowOptions = {},
 ): Promise<void> {
     const reasoningRaw = m.reasoning_content ? String(m.reasoning_content) : "";
     const contentRaw = m.content ?? "";
@@ -310,23 +367,7 @@ export async function patchAssistantRow(
     }
 
     patchAssistantTooling(row, m);
-
-    const copyBtn = row.querySelector("[data-copy-md]");
-    if (copyBtn && !copyBtn.hasAttribute("data-bound")) {
-        copyBtn.setAttribute("data-bound", "1");
-        copyBtn.addEventListener("click", () => {
-            void navigator.clipboard.writeText(m.content ?? "");
-        });
-    }
-
-    const regenBtn = row.querySelector("[data-regenerate-assistant]") as HTMLButtonElement | null;
-    if (regenBtn) {
-        regenBtn.hidden = mdStreaming;
-    }
-    const exportBtn = row.querySelector("[data-export-assistant]") as HTMLButtonElement | null;
-    if (exportBtn) {
-        exportBtn.hidden = mdStreaming;
-    }
+    syncAssistantActionsVisibility(row, m, options.showActions === true);
 
     const needStreamFinalize = prev != null && prev.streamOpen && !mdStreaming;
     const reasoningChanged = !prev || prev.reasoning !== reasoningRaw;

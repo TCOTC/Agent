@@ -1,4 +1,5 @@
 import type {ChatMessage, ToolConfirmInfo} from "../../agent/types";
+import {detachAssistantConfirmHost, mountAssistantConfirmHost} from "./assistantRowChrome";
 import {pendingActionKey, readSessionIdFromMessagesEl, resolveInlineToolConfirm} from "./inlineToolActions";
 
 const notifiedPendingIds = new Set<string>();
@@ -27,11 +28,15 @@ function toolNameForId(m: ChatMessage, toolCallId: string): string {
     return tc?.function.name ?? "工具";
 }
 
-function dismissConfirmPanel(host: HTMLElement, toolCallId: string): void {
+function dismissConfirmPanel(row: HTMLElement, toolCallId: string): void {
+    const host = row.querySelector(".agent-msg__confirms");
+    if (!host) {
+        return;
+    }
     host.querySelector(`[data-confirm-id="${CSS.escape(toolCallId)}"]`)?.remove();
     if (!host.querySelector(".agent-msg-confirm")) {
         host.replaceChildren();
-        host.hidden = true;
+        detachAssistantConfirmHost(row);
     }
 }
 
@@ -41,9 +46,9 @@ function bindConfirmPanel(panel: HTMLElement, sessionId: string, toolCallId: str
     }
     panel.setAttribute("data-bound", "1");
     const finish = (approved: boolean) => {
-        const host = panel.closest(".agent-msg__confirms") as HTMLElement | null;
-        if (host) {
-            dismissConfirmPanel(host, toolCallId);
+        const row = panel.closest(".agent-msg--assistant") as HTMLElement | null;
+        if (row) {
+            dismissConfirmPanel(row, toolCallId);
         } else {
             panel.remove();
         }
@@ -102,11 +107,6 @@ export function renderAssistantConfirmBanner(
     m: ChatMessage,
     options: RenderConfirmBannerOptions = {},
 ): void {
-    const host = row.querySelector(".agent-msg__confirms") as HTMLElement | null;
-    if (!host) {
-        return;
-    }
-
     const sessionId = options.sessionId ?? readSessionIdFromMessagesEl(row);
     if (!sessionId) {
         return;
@@ -114,12 +114,11 @@ export function renderAssistantConfirmBanner(
 
     const pending = Object.entries(m._toolConfirm ?? {}).filter(([, v]) => v.status === "pending");
     if (!pending.length) {
-        host.replaceChildren();
-        host.hidden = true;
+        detachAssistantConfirmHost(row);
         return;
     }
 
-    host.hidden = false;
+    const host = mountAssistantConfirmHost(row);
     const seen = new Set<string>();
 
     for (const [toolCallId, info] of pending) {

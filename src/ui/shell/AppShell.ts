@@ -45,6 +45,8 @@ import {
     patchAssistantRowPlain,
     patchAssistantToolCallsOnly,
     patchAssistantTooling,
+    isRoundTailAssistant,
+    syncAllAssistantActionsVisibility,
 } from "../chat/messageRenderer";
 import {clearConfirmNotifications} from "../chat/toolConfirmBanner";
 import {
@@ -657,6 +659,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                     const row = ensureMessageRow(elMessages, m, rowByMessage, slot, rowToMessage);
                     patchAssistantToolCallsOnly(row, m);
                 }
+                syncAllAssistantActionsVisibility(visibleMsgs, rowByMessage);
                 const dist = elChatBody.scrollHeight - elChatBody.scrollTop - elChatBody.clientHeight;
                 if (dist < 120) {
                     elChatBody.scrollTop = elChatBody.scrollHeight;
@@ -805,14 +808,15 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             if (m.role === "user") {
                 ensureUserMessageEditor(m, row);
             } else if (m.role === "assistant") {
+                const showActions = isRoundTailAssistant(visibleMsgs, i);
                 if (lute) {
                     try {
-                        await patchAssistantRow(row, m, lute, isDestroyed);
+                        await patchAssistantRow(row, m, lute, isDestroyed, {showActions});
                     } catch {
-                        patchAssistantRowPlain(row, m);
+                        patchAssistantRowPlain(row, m, {showActions});
                     }
                 } else {
-                    patchAssistantRowPlain(row, m);
+                    patchAssistantRowPlain(row, m, {showActions});
                 }
             }
 
@@ -820,6 +824,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 return;
             }
         }
+
+        syncAllAssistantActionsVisibility(visibleMsgs, rowByMessage);
 
         if (seq === renderSeq) {
             if (options?.scrollToEnd) {
