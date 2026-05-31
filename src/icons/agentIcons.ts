@@ -1,6 +1,5 @@
 import {
     ArrowUp,
-    Bot,
     Download,
     History,
     PanelRight,
@@ -11,6 +10,7 @@ import {
     Square,
     X,
 } from "lucide";
+import agentDockSvg from "./agent-dock.svg";
 
 /** Lucide IconNode：`[tag, attrs][]` */
 type IconNode = ReadonlyArray<readonly [string, Readonly<Record<string, string | number>>]>;
@@ -35,7 +35,6 @@ const lucideSymbolAttrs = (strokeWidth: number) =>
     `fill="none" stroke="currentColor" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"`;
 
 const AGENT_LUCIDE_ICONS: ReadonlyArray<{ id: AgentIconId; node: IconNode; strokeWidth?: number }> = [
-    {id: AGENT_ICON_IDS.agent, node: Bot},
     {id: AGENT_ICON_IDS.plus, node: Plus},
     {id: AGENT_ICON_IDS.history, node: History},
     {id: AGENT_ICON_IDS.refresh, node: RefreshCw},
@@ -66,9 +65,23 @@ function lucideToSymbol(id: AgentIconId, nodes: IconNode, strokeWidth = 2): stri
     return `<symbol id="${id}" viewBox="0 0 24 24" ${lucideSymbolAttrs(strokeWidth)}>${iconNodeToInnerHtml(nodes)}</symbol>`;
 }
 
+function svgFileToSymbol(id: AgentIconId, svg: string): string {
+    const viewBoxMatch = /viewBox="([^"]+)"/.exec(svg);
+    const viewBox = viewBoxMatch?.[1] ?? "0 0 24 24";
+    const inner = svg
+        .replace(/<\?xml[^?]*\?>\s*/i, "")
+        .replace(/<svg[^>]*>/, "")
+        .replace(/<\/svg>\s*$/i, "")
+        .replace(/stroke="black"/gi, 'stroke="currentColor"');
+    return `<symbol id="${id}" viewBox="${viewBox}" fill="none">${inner}</symbol>`;
+}
+
 /** 生成思源 `addIcons` 所需的 `<symbol>` 片段 */
 export function buildAgentIconSymbols(): string {
-    return AGENT_LUCIDE_ICONS.map(({id, node, strokeWidth}) => lucideToSymbol(id, node, strokeWidth)).join("");
+    return [
+        svgFileToSymbol(AGENT_ICON_IDS.agent, agentDockSvg),
+        ...AGENT_LUCIDE_ICONS.map(({id, node, strokeWidth}) => lucideToSymbol(id, node, strokeWidth)),
+    ].join("");
 }
 
 export interface AgentIconOptions {
