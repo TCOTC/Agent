@@ -31,10 +31,10 @@ export const AGENT_ICON_IDS = {
 
 export type AgentIconId = typeof AGENT_ICON_IDS[keyof typeof AGENT_ICON_IDS];
 
-const LUCIDE_SYMBOL_ATTRS =
-    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+const lucideSymbolAttrs = (strokeWidth: number) =>
+    `fill="none" stroke="currentColor" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"`;
 
-const AGENT_LUCIDE_ICONS: ReadonlyArray<{ id: AgentIconId; node: IconNode }> = [
+const AGENT_LUCIDE_ICONS: ReadonlyArray<{ id: AgentIconId; node: IconNode; strokeWidth?: number }> = [
     {id: AGENT_ICON_IDS.agent, node: Bot},
     {id: AGENT_ICON_IDS.plus, node: Plus},
     {id: AGENT_ICON_IDS.history, node: History},
@@ -44,7 +44,7 @@ const AGENT_LUCIDE_ICONS: ReadonlyArray<{ id: AgentIconId; node: IconNode }> = [
     {id: AGENT_ICON_IDS.settings, node: Settings},
     {id: AGENT_ICON_IDS.panelRight, node: PanelRight},
     {id: AGENT_ICON_IDS.x, node: X},
-    {id: AGENT_ICON_IDS.arrowUp, node: ArrowUp},
+    {id: AGENT_ICON_IDS.arrowUp, node: ArrowUp, strokeWidth: 2.5},
     {id: AGENT_ICON_IDS.square, node: Square},
 ];
 
@@ -62,13 +62,13 @@ function iconNodeToInnerHtml(nodes: IconNode): string {
     }).join("");
 }
 
-function lucideToSymbol(id: AgentIconId, nodes: IconNode): string {
-    return `<symbol id="${id}" viewBox="0 0 24 24" ${LUCIDE_SYMBOL_ATTRS}>${iconNodeToInnerHtml(nodes)}</symbol>`;
+function lucideToSymbol(id: AgentIconId, nodes: IconNode, strokeWidth = 2): string {
+    return `<symbol id="${id}" viewBox="0 0 24 24" ${lucideSymbolAttrs(strokeWidth)}>${iconNodeToInnerHtml(nodes)}</symbol>`;
 }
 
 /** 生成思源 `addIcons` 所需的 `<symbol>` 片段 */
 export function buildAgentIconSymbols(): string {
-    return AGENT_LUCIDE_ICONS.map(({id, node}) => lucideToSymbol(id, node)).join("");
+    return AGENT_LUCIDE_ICONS.map(({id, node, strokeWidth}) => lucideToSymbol(id, node, strokeWidth)).join("");
 }
 
 export interface AgentIconOptions {

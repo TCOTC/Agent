@@ -367,7 +367,7 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
 
     const BlockRef = createComposerBlockRefExtension();
 
-    const placeholderText = opts.placeholder ?? "说点什么…";
+    const placeholderText = opts.placeholder ?? "说点什么，或按下 @ 引用文档";
 
     const editor = new Editor({
         element: opts.editorHost,

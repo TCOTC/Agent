@@ -198,9 +198,9 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
               </svg>
               <span class="agent-context-ring__pct" data-ring-pct>0</span>
             </button>
-            <button type="button" class="agent-composer__submit" data-submit title="发送" aria-label="发送">
-              ${agentIconHtml(AGENT_ICON_IDS.arrowUp, { size: 9, className: "agent-composer__submit-icon", attrs: { "data-submit-icon-send": "" } })}
-              ${agentIconHtml(AGENT_ICON_IDS.square, { size: 9, className: "agent-composer__submit-icon fn__none", attrs: { "data-submit-icon-stop": "" } })}
+            <button type="button" class="agent-send-btn" data-submit title="发送" aria-label="发送">
+              ${agentIconHtml(AGENT_ICON_IDS.arrowUp, { size: 10, className: "agent-send-btn__icon", attrs: { "data-submit-icon-send": "" } })}
+              ${agentIconHtml(AGENT_ICON_IDS.square, { size: 9, className: "agent-send-btn__icon fn__none", attrs: { "data-submit-icon-stop": "" } })}
             </button>
           </div>
         </div>
@@ -266,7 +266,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const isDestroyed = () => destroyed;
 
     const setSubmitRunning = (running: boolean) => {
-        btnSubmit.classList.toggle("agent-composer__submit--stop", running);
+        btnSubmit.classList.toggle("agent-send-btn--stop", running);
         btnSubmit.title = running ? "停止" : "发送";
         btnSubmit.setAttribute("aria-label", running ? "停止" : "发送");
         elSubmitIconSend.classList.toggle("fn__none", running);
@@ -989,7 +989,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         editorHost: elComposerEditor,
         app: plugin.app,
         kernel,
-        placeholder: "说点什么…",
+        placeholder: "说点什么，或按下 @ 引用文档",
         sendKeyMode: getSendKeyMode(),
         onSend: () => void runSend(),
         onDraftChange: scheduleComposerDraftPersist,

@@ -1,0 +1,189 @@
+// 上下文明细卡片 + footer 上下文环
+.agent-context-card {
+  flex-shrink: 0;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--b3-border-color);
+  border-radius: 10px;
+  background: var(--b3-theme-background);
+  box-shadow: var(--b3-point-shadow);
+  font-size: 12px;
+  color: var(--b3-theme-on-background);
+
+  &__head {
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  &__title {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  &__close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: var(--b3-border-radius);
+    background: transparent;
+    color: var(--b3-theme-on-surface-light);
+    cursor: pointer;
+    line-height: 1;
+
+    svg {
+      display: block;
+    }
+
+    &:hover {
+      background: var(--b3-list-hover);
+      color: var(--b3-theme-on-background);
+    }
+  }
+
+  &__meta {
+    align-items: baseline;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--b3-theme-on-surface-light);
+    margin-bottom: 6px;
+
+    [data-context-pct-label] {
+      font-weight: 600;
+      color: var(--b3-theme-on-background);
+    }
+
+    [data-context-token-range] {
+      font-family: var(--b3-font-family-code);
+      font-size: 10px;
+    }
+  }
+
+  &__bar {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--b3-border-color);
+    overflow: hidden;
+    margin-bottom: 10px;
+
+    span {
+      display: block;
+      height: 100%;
+      border-radius: 999px;
+      background: var(--b3-theme-primary);
+      transition: width 0.25s ease;
+    }
+  }
+
+  &__body {
+    min-height: 0;
+  }
+
+  &__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__list li {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 11px;
+    line-height: 1.35;
+
+    & + li {
+      border-top: 1px solid var(--b3-border-color-trans, rgba(128, 128, 128, 0.1));
+    }
+  }
+
+  &__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+
+    &--prompt {
+      background: var(--b3-theme-primary);
+    }
+
+    &--round {
+      background: #7cb342;
+    }
+
+    &--total {
+      background: #ab47bc;
+    }
+  }
+
+  &__name {
+    opacity: 0.85;
+  }
+
+  &__val {
+    font-family: var(--b3-font-family-code);
+    font-size: 10px;
+    text-align: right;
+    word-break: break-all;
+  }
+
+  &__note {
+    margin: 8px 0 0;
+    padding-top: 6px;
+    border-top: 1px solid var(--b3-border-color-trans, rgba(128, 128, 128, 0.12));
+    font-size: 10px;
+    line-height: 1.35;
+    opacity: 0.55;
+  }
+}
+
+.agent-context-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  color: var(--b3-theme-on-surface-light);
+  transition: color 0.12s ease;
+
+  &:hover {
+    color: var(--b3-theme-primary);
+  }
+
+  &__svg {
+    width: 24px;
+    height: 24px;
+    transform: rotate(-90deg);
+  }
+
+  &__track {
+    stroke: var(--b3-border-color);
+    stroke-width: 2;
+  }
+
+  &__fill {
+    stroke: var(--b3-theme-primary);
+    stroke-width: 2;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.25s ease;
+  }
+
+  &__pct {
+    position: absolute;
+    font-size: 7px;
+    font-weight: 700;
+    line-height: 1;
+    pointer-events: none;
+  }
+}

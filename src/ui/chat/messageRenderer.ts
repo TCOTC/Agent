@@ -31,8 +31,8 @@ export function buildUserMessageRow(): HTMLElement {
     row.className = "agent-msg agent-msg--user";
     row.innerHTML = `<div class="agent-msg__editor" data-user-editor></div>
 <div class="agent-msg__footer fn__flex">
-  <button type="button" class="agent-msg__submit" data-user-resend title="发送" aria-label="发送">
-    ${agentIconHtml(AGENT_ICON_IDS.arrowUp, { size: 8, className: "agent-msg__submit-icon" })}
+  <button type="button" class="agent-send-btn" data-user-resend title="发送" aria-label="发送">
+    ${agentIconHtml(AGENT_ICON_IDS.arrowUp, { size: 10, className: "agent-send-btn__icon", attrs: { "data-submit-icon-send": "" } })}
   </button>
 </div>`;
     return row;

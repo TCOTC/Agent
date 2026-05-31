@@ -1,0 +1,47 @@
+// 输入区与已发送用户消息共用的圆形发送按钮
+.agent-send-btn {
+  // 与 composer 上下文环外径一致（28 viewBox、r=11.5、stroke 2 → 外径 25 单位，控件 24px）
+  --agent-send-btn-size: calc(25 / 28 * 24px);
+  flex-shrink: 0;
+  width: var(--agent-send-btn-size);
+  height: var(--agent-send-btn-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: var(--b3-theme-on-background);
+  color: var(--b3-theme-background);
+  transition: background 0.12s ease, opacity 0.12s ease, transform 0.12s ease;
+
+  &:hover {
+    filter: brightness(0.92);
+  }
+
+  &:active {
+    transform: scale(0.96);
+  }
+
+  &--stop {
+    background: var(--b3-theme-on-surface);
+    color: var(--b3-theme-background);
+  }
+}
+
+.agent-send-btn__icon {
+  display: block;
+  pointer-events: none;
+
+  &[data-submit-icon-send] {
+    width: 10px;
+    height: 10px;
+  }
+
+  &[data-submit-icon-stop] {
+    width: 9px;
+    height: 9px;
+  }
+}

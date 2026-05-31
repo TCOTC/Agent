@@ -1,0 +1,95 @@
+// Composer 下拉、模式菜单与 @ 块引用建议列表
+.agent-dd {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  max-width: min(200px, 42vw);
+  height: 24px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--b3-theme-on-background);
+  transition: background 0.12s ease, color 0.12s ease;
+
+  &:hover {
+    background: var(--b3-list-hover);
+  }
+
+  &[aria-expanded="true"] {
+    background: var(--b3-list-hover);
+  }
+
+  &__label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    max-width: 160px;
+  }
+}
+
+.agent-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--b3-theme-on-background);
+
+  &:hover {
+    background: var(--b3-list-hover);
+  }
+
+  strong {
+    margin-right: 6px;
+  }
+}
+
+#agent-composer-mention {
+  min-width: 280px;
+  max-width: min(100vw - 24px, 420px);
+  max-height: min(402px, 40vh);
+
+  mark {
+    background: var(--b3-protyle-inline-mark-background);
+    color: var(--b3-protyle-inline-mark-color);
+    padding: 0 1px;
+    border-radius: 2px;
+  }
+}
+
+.agent-mention-menu__item--two-line .b3-menu__label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.agent-mention-menu__title {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-mention-menu__meta {
+  display: block;
+  max-width: 100%;
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--b3-theme-on-surface-light);
+}

@@ -1,0 +1,221 @@
+// 底部输入框：外框卡片 + TipTap 编辑区 + 底部工具栏
+.agent-composer {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  padding: 8px 12px 12px;
+  background: var(--b3-theme-background);
+  overflow: visible;
+  position: relative;
+  z-index: 2;
+
+  &__card {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--b3-border-color);
+    border-radius: 12px;
+    background: var(--b3-theme-background);
+    overflow: visible;
+    min-height: 0;
+  }
+
+  &__input-wrap {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  &__editor {
+    padding: 12px 14px 6px;
+    min-height: 3em;
+    max-height: 15em;
+    overflow-y: auto;
+    cursor: text;
+  }
+
+  &__pm {
+    outline: none;
+    min-height: 1.5em;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--b3-theme-on-background);
+
+    ::selection {
+      background: var(--b3-theme-primary-lightest);
+      color: inherit;
+    }
+
+    // 空文档仅有 trailingBreak，全选时浏览器仍可能画出细条选区
+    &.is-editor-empty {
+      ::selection {
+        background: transparent;
+      }
+
+      br.ProseMirror-trailingBreak {
+        outline: none;
+      }
+    }
+
+    p {
+      margin: 0;
+    }
+
+    // Placeholder：decoration 挂在 <p.is-empty>；空文档时在根上同步 is-editor-empty 作兜底
+    &.is-editor-empty > p:first-child::before,
+    p.is-empty::before {
+      float: left;
+      color: var(--b3-theme-on-surface-light);
+      opacity: 0.75;
+      pointer-events: none;
+      height: 0;
+    }
+
+    &.is-editor-empty > p:first-child::before {
+      content: var(--agent-composer-placeholder);
+    }
+
+    p.is-empty::before {
+      content: attr(data-placeholder);
+    }
+
+    // NodeView 芯片与同行文字共用行盒，避免 baseline + 固定高度导致相对光标上偏
+    p > .agent-block-ref-chip:first-child {
+      margin-left: 1px;
+    }
+
+    .agent-block-ref-chip {
+      display: inline-flex;
+      align-items: center;
+      max-width: min(100%, 280px);
+      height: 1.5em;
+      margin: 0 2px;
+      padding: 0 6px 0 2px;
+      box-sizing: border-box;
+      vertical-align: middle;
+      border-radius: 6px;
+      background: var(--b3-theme-surface);
+      border: 1px solid var(--b3-border-color);
+      font-size: inherit;
+      line-height: inherit;
+      user-select: none;
+      transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+
+      &--selected {
+        background: var(--b3-theme-primary-lightest);
+        border-color: var(--b3-theme-primary);
+        box-shadow: 0 0 0 1px var(--b3-theme-primary-lighter);
+      }
+
+      &__lead {
+        position: relative;
+        flex-shrink: 0;
+        width: 1.15em;
+        height: 1.15em;
+        margin-right: 4px;
+        border-radius: 4px;
+        cursor: pointer;
+
+        &:hover {
+          background: var(--b3-list-hover);
+        }
+      }
+
+      &__type,
+      &__remove {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.12s ease;
+      }
+
+      &__type {
+        opacity: 1;
+        visibility: visible;
+      }
+
+      &__remove {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      &__lead:hover {
+        .agent-block-ref-chip__type {
+          opacity: 0;
+          visibility: hidden;
+          pointer-events: none;
+        }
+
+        .agent-block-ref-chip__remove {
+          opacity: 1;
+          visibility: visible;
+          pointer-events: auto;
+        }
+      }
+
+      &__svg {
+        width: 0.95em;
+        height: 0.95em;
+        fill: currentColor;
+        opacity: 0.78;
+      }
+
+      &__remove &__svg {
+        opacity: 0.9;
+      }
+
+      &__ref {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: inherit;
+        line-height: inherit;
+        color: var(--b3-protyle-inline-blockref-color);
+        opacity: 0.86;
+        cursor: pointer;
+        transition: var(--b3-transition);
+
+        &:hover {
+          opacity: 1;
+        }
+      }
+    }
+  }
+
+  &__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+    padding: 4px 10px 10px;
+    overflow: visible;
+  }
+
+  &__footer-start,
+  &__footer-end {
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  &__footer-end {
+    margin-left: auto;
+    // 上下文环控件边长；发送按钮外径见 send-btn.scss（与环外径对齐）
+    --agent-footer-control: 24px;
+
+    .agent-context-ring {
+      flex-shrink: 0;
+      width: var(--agent-footer-control);
+      height: var(--agent-footer-control);
+    }
+  }
+}
