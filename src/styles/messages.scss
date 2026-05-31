@@ -49,7 +49,8 @@
     }
   }
 
-  &--user &__input {
+  &--user &__input,
+  &--user &__editor {
     field-sizing: content;
     min-block-size: 1lh;
     max-block-size: 3lh;
@@ -58,7 +59,15 @@
     cursor: pointer;
   }
 
-  &--user:focus-within &__input {
+  &--user &__editor .agent-composer__pm {
+    min-height: 1lh;
+    font-size: 13px;
+    line-height: 1.5;
+    outline: none;
+  }
+
+  &--user:focus-within &__input,
+  &--user:focus-within &__editor {
     max-block-size: 10lh;
     padding: 12px 14px 6px;
     overflow-x: hidden;

@@ -24,11 +24,17 @@ import {
     openComposerMentionMenu,
     updateComposerMentionMenu,
 } from "./mentionMenu";
+import {
+    blockMentionWireMarkdown,
+    composerDocToLlmText,
+    plainTextToComposerDoc,
+} from "./blockMentionText";
 import {handleComposerCopy, handleComposerPaste} from "./composerClipboard";
 
 export interface ComposerEditorHandle {
     focus: () => void;
     destroy: () => void;
+    /** 发送给 Agent 的纯文本（块引用为无 `@` 的 Markdown 链接） */
     getSendText: () => string;
     getDocumentJSON: () => JSONContent;
     hasVisibleContent: () => boolean;
@@ -60,36 +66,22 @@ function blockRefDisplayLabel(attrs: {id?: string | null; label?: string | null}
 /** 段首落点用，便于在块引用芯片前点击/输入；发送时剥离 */
 const COMPOSER_LEADING_ZWSP = "\u200b";
 
-function blockMentionMarkdown(label: string, blockId: string): string {
-    const escLabel = label.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
-    return `@[${escLabel}](siyuan://blocks/${blockId})`;
-}
-
-function inlineNodesToSendText(node: ProseMirrorNode): string {
-    let out = "";
-    node.forEach((child) => {
-        if (child.type.name === "mention") {
-            const id = String(child.attrs.id ?? "");
-            const label = String(child.attrs.label ?? id);
-            out += blockMentionMarkdown(label, id);
-        } else if (child.isText) {
-            out += (child.text ?? "").replaceAll(COMPOSER_LEADING_ZWSP, "");
-        } else if (child.type.name === "hardBreak") {
-            out += "\n";
-        }
-    });
-    return out;
-}
-
-/** 将编辑器文档序列化为发送给 Agent 的纯文本（mention → `@[label](siyuan://blocks/id)`） */
+/** 将编辑器文档序列化为发送给 Agent 的纯文本（mention → `[label](siyuan://blocks/id)`） */
 export function serializeComposerSendText(editor: Editor): string {
-    const parts: string[] = [];
-    editor.state.doc.forEach((node) => {
-        if (node.type.name === "paragraph") {
-            parts.push(inlineNodesToSendText(node));
+    const zwspStripped: JSONContent = JSON.parse(JSON.stringify(editor.getJSON()));
+    const stripZwsp = (nodes: JSONContent[] | undefined) => {
+        if (!nodes) {
+            return;
         }
-    });
-    return parts.join("\n").trim();
+        for (const n of nodes) {
+            if (n.type === "text" && typeof n.text === "string") {
+                n.text = n.text.replaceAll(COMPOSER_LEADING_ZWSP, "");
+            }
+            stripZwsp(n.content);
+        }
+    };
+    stripZwsp(zwspStripped.content);
+    return composerDocToLlmText(zwspStripped);
 }
 
 /** 是否有用户输入（含空格；不含零宽占位与纯 trailingBreak） */
@@ -393,7 +385,10 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
             }),
             BlockRef.configure({
                 renderText: ({node}) =>
-                    blockMentionMarkdown(blockRefDisplayLabel(node.attrs), String(node.attrs.id ?? "")),
+                    blockMentionWireMarkdown(
+                        blockRefDisplayLabel(node.attrs),
+                        String(node.attrs.id ?? ""),
+                    ),
                 suggestion: {
                     char: "@",
                     allowSpaces: true,
@@ -505,12 +500,7 @@ export function mountComposerEditor(opts: MountComposerEditorOptions): ComposerE
         hasVisibleContent: () => composerDocHasVisibleContent(editor.state.doc),
         clear: () => editor.commands.clearContent(),
         setSendText: (text: string) => {
-            const lines = text.split("\n");
-            const content = lines.map((line) => ({
-                type: "paragraph" as const,
-                content: line ? [{type: "text" as const, text: line}] : [],
-            }));
-            editor.commands.setContent({type: "doc", content});
+            editor.commands.setContent(plainTextToComposerDoc(text));
         },
         setDocumentJSON: (json) => {
             if (!json || json.type !== "doc") {

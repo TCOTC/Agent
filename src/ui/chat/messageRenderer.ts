@@ -26,17 +26,15 @@ type Patch = {
     thinkingMdOpen: boolean;
 };
 
-export function buildUserMessageRow(content: string): HTMLElement {
+export function buildUserMessageRow(): HTMLElement {
     const row = document.createElement("article");
     row.className = "agent-msg agent-msg--user";
-    row.innerHTML = `<textarea class="agent-msg__input" rows="2" spellcheck="false"></textarea>
+    row.innerHTML = `<div class="agent-msg__editor" data-user-editor></div>
 <div class="agent-msg__footer fn__flex">
   <button type="button" class="agent-msg__submit" data-user-resend title="发送" aria-label="发送">
     ${agentIconHtml(AGENT_ICON_IDS.arrowUp, { size: 8, className: "agent-msg__submit-icon" })}
   </button>
 </div>`;
-    const input = row.querySelector(".agent-msg__input") as HTMLTextAreaElement;
-    input.value = content;
     return row;
 }
 
@@ -298,7 +296,7 @@ export function ensureMessageRow(
         if (m.role === "assistant") {
             row = buildAssistantRow();
         } else if (m.role === "user") {
-            row = buildUserMessageRow(m.content ?? "");
+            row = buildUserMessageRow();
         } else if (m.role === "tool") {
             row = buildToolResultRow(m);
         } else {

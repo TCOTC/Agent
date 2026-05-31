@@ -1,5 +1,10 @@
 import type {ChatMessage} from "../../agent/types";
+import {userContentToLlmMarkdown} from "../../ui/composer/blockMentionText";
 import type {AgentMessage, AssistantAgentMessage, ToolResultAgentMessage, UserAgentMessage} from "./types";
+
+function userContentForLlm(content: string): string {
+    return userContentToLlmMarkdown(content);
+}
 
 export function userMessage(content: string): UserAgentMessage {
     return {role: "user", content, timestamp: Date.now()};
@@ -35,7 +40,7 @@ export function convertToLlm(messages: AgentMessage[]): ChatMessage[] {
     const out: ChatMessage[] = [];
     for (const m of messages) {
         if (m.role === "user") {
-            out.push({role: "user", content: m.content});
+            out.push({role: "user", content: userContentForLlm(m.content ?? "")});
         } else if (m.role === "assistant") {
             const a: ChatMessage = {
                 role: "assistant",

@@ -1,6 +1,9 @@
 import type {AgentMode} from "../agent/modes";
+import type {ChatMessage} from "../agent/types";
+import {composerDocToPlainText, legacyUserContentToComposerDoc} from "../ui/composer/blockMentionText";
 import {emptyUsage} from "../core/tokenUsage";
 import type {ChatSession, SessionsPersisted} from "./types";
+import type {JSONContent} from "@tiptap/core";
 
 export function createSession(
     title = "新对话",
@@ -54,12 +57,30 @@ export function normalizeSessions(raw: unknown): SessionsPersisted {
     return {activeId, sessions};
 }
 
+function userMessagePlainText(m: ChatMessage): string {
+    const doc = m.composerDoc as JSONContent | undefined;
+    if (doc?.type === "doc") {
+        const t = composerDocToPlainText(doc);
+        if (t) {
+            return t;
+        }
+    }
+    if (m.content) {
+        const legacyDoc = legacyUserContentToComposerDoc(m.content);
+        return composerDocToPlainText(legacyDoc) || m.content;
+    }
+    return "";
+}
+
 export function deriveSessionTitle(messages: ChatMessage[]): string {
-    const first = messages.find((m) => m.role === "user" && m.content);
-    if (!first?.content) {
+    const first = messages.find((m) => m.role === "user" && (m.content || m.composerDoc));
+    if (!first) {
         return "新对话";
     }
-    const t = first.content.trim().replace(/\s+/g, " ");
+    const t = userMessagePlainText(first).trim().replace(/\s+/g, " ");
+    if (!t) {
+        return "新对话";
+    }
     return t.length > 28 ? `${t.slice(0, 28)}…` : t;
 }
 

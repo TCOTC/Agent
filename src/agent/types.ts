@@ -137,9 +137,14 @@ export interface ToolConfirmRequest {
     detail: string;
 }
 
+/** 用户消息可编辑的 TipTap 文档（含块引用芯片）；展示与编辑用，不直接发给 LLM */
+export type UserMessageComposerDoc = Record<string, unknown>;
+
 export interface ChatMessage {
     role: ChatRole;
     content: string | null;
+    /** 用户消息：TipTap 文档 JSON，含块引用芯片；未设置时由 content 解析 */
+    composerDoc?: UserMessageComposerDoc;
     reasoning_content?: string | null;
     tool_calls?: OpenAiToolCallChunk[];
     tool_call_id?: string;

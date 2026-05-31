@@ -7,7 +7,9 @@ import {createFetchSyncKernelExecutor} from "../../agent/kernelExecutor";
 import {ActivityLogBuffer} from "../../core/activityLog";
 import {STORAGE_KEY_ACTIVITY, STORAGE_KEY_SESSIONS, STORAGE_KEY_TOKEN_STATS} from "../../core/constants";
 import {closeAllComposerDropdowns, mountComposerDropdown} from "../composer/composerDropdown";
+import {legacyUserContentToComposerDoc} from "../composer/blockMentionText";
 import {mountComposerEditor, type ComposerEditorHandle} from "../composer/composerEditor";
+import type {JSONContent} from "@tiptap/core";
 import {agentBus, AgentEvents} from "../../core/eventBus";
 import {AGENT_ICON_IDS, agentIconHtml} from "../../icons/agentIcons";
 import {
@@ -30,7 +32,7 @@ import type {ChatSession, SessionsPersisted} from "../../session/types";
 import {reapplyPendingRiskConfirms} from "../../settings/reapplyRiskConfirms";
 import {subscribeSettingsChange} from "../../settings/settingsNotify";
 import {normalizeSettings, STORAGE_KEY_SETTINGS} from "../../settings/storage";
-import {getSendKeyHintHtml, handleComposerEnterKey} from "../../settings/sendKey";
+import {getSendKeyHintHtml} from "../../settings/sendKey";
 import type {PersistedSettings} from "../../settings/types";
 import {mountTimelinePanel, parseJsonlLines} from "../activity/TimelinePanel";
 import {
@@ -77,6 +79,9 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     let afterAbortAction: (() => void) | null = null;
     let railExpanded = false;
     const rowByMessage = new WeakMap<ChatMessage, HTMLElement>();
+    const userEditorByMessage = new WeakMap<ChatMessage, ComposerEditorHandle>();
+    const userMessageEditors = new Set<ComposerEditorHandle>();
+    let userMessageDraftTimer: ReturnType<typeof setTimeout> | null = null;
     const activityBuf = new ActivityLogBuffer();
     const kernel = createFetchSyncKernelExecutor();
 
@@ -757,13 +762,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             }
 
             if (m.role === "user") {
-                const input = row.querySelector(".agent-msg__input") as HTMLTextAreaElement | null;
-                if (input && document.activeElement !== input) {
-                    const next = m.content ?? "";
-                    if (input.value !== next) {
-                        input.value = next;
-                    }
-                }
+                ensureUserMessageEditor(m, row);
             } else if (m.role === "assistant") {
                 if (lute) {
                     try {
@@ -854,8 +853,59 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const removed = s.messages.splice(idx);
         for (const msg of removed) {
             clearAssistantCache(msg);
+            if (msg.role === "user") {
+                destroyUserMessageEditor(msg);
+            }
         }
         persistSessions();
+    };
+
+    const destroyUserMessageEditor = (m: ChatMessage) => {
+        const ed = userEditorByMessage.get(m);
+        if (!ed) {
+            return;
+        }
+        ed.destroy();
+        userMessageEditors.delete(ed);
+    };
+
+    const scheduleUserMessageDraftPersist = (m: ChatMessage) => {
+        if (userMessageDraftTimer !== null) {
+            clearTimeout(userMessageDraftTimer);
+        }
+        userMessageDraftTimer = setTimeout(() => {
+            userMessageDraftTimer = null;
+            persistSessions();
+        }, 400);
+    };
+
+    const ensureUserMessageEditor = (m: ChatMessage, row: HTMLElement) => {
+        const host = row.querySelector("[data-user-editor]") as HTMLElement | null;
+        if (!host) {
+            return;
+        }
+        let editor = userEditorByMessage.get(m);
+        if (!editor) {
+            editor = mountComposerEditor({
+                editorHost: host,
+                app: plugin.app,
+                kernel,
+                placeholder: "",
+                sendKeyMode: getSendKeyMode(),
+                onSend: () => resendUserMessage(row),
+                onDraftChange: () => {
+                    m.composerDoc = editor!.getDocumentJSON();
+                    scheduleUserMessageDraftPersist(m);
+                },
+            });
+            userEditorByMessage.set(m, editor);
+            userMessageEditors.add(editor);
+            const doc =
+                m.composerDoc && (m.composerDoc as JSONContent).type === "doc"
+                    ? (m.composerDoc as JSONContent)
+                    : legacyUserContentToComposerDoc(m.content ?? "");
+            editor.setDocumentJSON(doc);
+        }
     };
 
     const resendUserMessage = (row: HTMLElement) => {
@@ -863,15 +913,15 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         if (!m || m.role !== "user") {
             return;
         }
-        const input = row.querySelector(".agent-msg__input") as HTMLTextAreaElement | null;
-        if (!input) {
-            return;
-        }
-        const text = input.value.trim();
+        const editor = userEditorByMessage.get(m);
+        const text = (editor?.getSendText() ?? m.content ?? "").trim();
         if (!text) {
             return;
         }
-        const doResend = () => void runSend({text, truncateFrom: m});
+        if (editor) {
+            m.composerDoc = editor.getDocumentJSON();
+        }
+        const doResend = () => void runSend({text, truncateFrom: m, composerDoc: m.composerDoc});
         if (isActiveSessionStreaming()) {
             afterAbortAction = doResend;
             abortSessionRun(sessions.activeId);
@@ -947,11 +997,21 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     restoreComposerDraft();
 
-    const runSend = async (opts?: {text?: string; truncateFrom?: ChatMessage}) => {
+    const runSend = async (opts?: {
+        text?: string;
+        truncateFrom?: ChatMessage;
+        composerDoc?: ChatMessage["composerDoc"];
+    }) => {
         const text = (opts?.text ?? composerEditor.getSendText()).trim();
         if (!text) {
             return;
         }
+        const pendingUserComposerDoc: JSONContent | undefined = opts?.composerDoc
+            ? (opts.composerDoc as JSONContent)
+            : !opts?.text
+                ? composerEditor.getDocumentJSON()
+                : undefined;
+        let attachedUserComposerDoc = false;
         const settings = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]);
         if (!settings.apiKey) {
             plugin.showPluginMessage("请先配置 DeepSeek API Key");
@@ -1000,6 +1060,16 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 onAudit: (e) => pushAudit(e, sendSessionId),
                 onStreamDelta: () => scheduleStreamRender(sendSessionId),
                 onMessagesChanged: () => {
+                    if (pendingUserComposerDoc && !attachedUserComposerDoc) {
+                        const msgs = getSessionById(sendSessionId)?.messages ?? sess.messages;
+                        for (let i = msgs.length - 1; i >= 0; i--) {
+                            if (msgs[i].role === "user") {
+                                msgs[i].composerDoc = pendingUserComposerDoc;
+                                break;
+                            }
+                        }
+                        attachedUserComposerDoc = true;
+                    }
                     scheduleStreamRender(sendSessionId);
                     if (sendSessionId === sessions.activeId) {
                     updateContextRing();
@@ -1065,8 +1135,13 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             plugin.showPluginMessage("没有可重新生成的消息");
             return;
         }
-        composerEditor.setSendText(lastUser.content);
+        const regenDoc =
+            lastUser.composerDoc && (lastUser.composerDoc as JSONContent).type === "doc"
+                ? (lastUser.composerDoc as JSONContent)
+                : legacyUserContentToComposerDoc(lastUser.content ?? "");
+        composerEditor.setDocumentJSON(regenDoc);
         s.messages.pop();
+        destroyUserMessageEditor(lastUser);
         persistSessions();
         void renderMessages();
         void runSend();
@@ -1118,11 +1193,13 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             return;
         }
         const t = e.target as HTMLElement;
-        if (t.closest(".agent-msg__input") || t.closest("[data-user-resend]")) {
+        if (t.closest(".agent-msg__editor") || t.closest("[data-user-resend]")) {
             return;
         }
-        const input = row.querySelector(".agent-msg__input") as HTMLTextAreaElement | null;
-        input?.focus();
+        const um = findMessageForRow(row);
+        if (um) {
+            userEditorByMessage.get(um)?.focus();
+        }
     });
     elMessages.addEventListener("click", (e) => {
         const btn = (e.target as HTMLElement).closest("[data-user-resend]");
@@ -1134,19 +1211,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             resendUserMessage(row);
         }
     });
-    elMessages.addEventListener("keydown", (e) => {
-        const el = e.target;
-        if (!(el instanceof HTMLTextAreaElement) || !el.classList.contains("agent-msg__input")) {
-            return;
-        }
-        const row = el.closest(".agent-msg--user") as HTMLElement | null;
-        if (!row) {
-            return;
-        }
-        const sendKeyMode = normalizeSettings(plugin.data[STORAGE_KEY_SETTINGS]).sendKeyMode;
-        handleComposerEnterKey(e, el, sendKeyMode, () => resendUserMessage(row));
-    });
-
     root.querySelector("[data-export-session]")?.addEventListener("click", () => {
         const s = getActive();
         downloadTextFile(`${s.title.replace(/[/\\?%*:|"<>]/g, "_")}.md`, sessionToMarkdown(s));
@@ -1265,6 +1329,14 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         modelDropdown.destroy();
         flushComposerDraft();
         composerEditor.destroy();
+        for (const ed of userMessageEditors) {
+            ed.destroy();
+        }
+        userMessageEditors.clear();
+        if (userMessageDraftTimer !== null) {
+            clearTimeout(userMessageDraftTimer);
+            userMessageDraftTimer = null;
+        }
         if (composerDraftTimer !== null) {
             clearTimeout(composerDraftTimer);
             composerDraftTimer = null;
