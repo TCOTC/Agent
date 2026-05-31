@@ -1,5 +1,6 @@
 import type {ChatMessage, OpenAiToolCallChunk} from "../../agent/types";
 import {scrollDiffToFirstChange} from "../../editor/diffEngine";
+import {isAgentChatAtBottom, scrollAgentChatToEndAfterLayoutIfSticky} from "./chatScroll";
 import {ensureAssistantRowChromeOrder} from "./assistantRowChrome";
 import {readSessionIdFromMessagesEl, resolveInlineToolDiff} from "./inlineToolActions";
 import {compactKernelResponseText} from "../../tools/truncate";
@@ -351,15 +352,17 @@ function patchDiffBlock(
     sessionId: string,
     toolCallId: string,
     diff: NonNullable<ChatMessage["_toolDiff"]>[string],
-): void {
+): boolean {
     let block = host.querySelector(
         `[data-tool-call-id="${CSS.escape(toolCallId)}"]`,
     ) as HTMLElement | null;
     if (diff.status !== "pending") {
         block?.remove();
-        return;
+        return false;
     }
+    let created = false;
     if (!block) {
+        created = true;
         block = document.createElement("div");
         block.className = "agent-tool-card__diff";
         block.dataset.toolCallId = toolCallId;
@@ -393,6 +396,7 @@ function patchDiffBlock(
             requestAnimationFrame(() => scrollDiffToFirstChange(bodyEl));
         });
     }
+    return created;
 }
 
 function patchResultBlock(body: HTMLElement, toolName: string, result: string | undefined): void {
@@ -476,8 +480,10 @@ function renderAssistantDiffs(
     m: ChatMessage,
     sessionId: string,
 ): void {
+    const stickyScroll = isAgentChatAtBottom();
     const host = ensureAssistantDiffsHost(row);
     const seen = new Set<string>();
+    let addedPendingDiff = false;
     for (const tc of m.tool_calls ?? []) {
         const id = tc.id;
         if (!id) {
@@ -486,7 +492,9 @@ function renderAssistantDiffs(
         const diff = m._toolDiff?.[id];
         if (diff?.status === "pending") {
             seen.add(id);
-            patchDiffBlock(host, sessionId, id, diff);
+            if (patchDiffBlock(host, sessionId, id, diff)) {
+                addedPendingDiff = true;
+            }
         }
     }
     for (const old of host.querySelectorAll(".agent-tool-card__diff")) {
@@ -496,6 +504,9 @@ function renderAssistantDiffs(
         }
     }
     host.hidden = host.childElementCount === 0;
+    if (addedPendingDiff) {
+        scrollAgentChatToEndAfterLayoutIfSticky(stickyScroll);
+    }
 }
 
 function createToolCard(toolName: string, toolCallId: string): HTMLDetailsElement {

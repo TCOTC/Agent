@@ -38,6 +38,13 @@ import {normalizeSettings, STORAGE_KEY_SETTINGS} from "../../settings/storage";
 import {getSendKeyHintHtml} from "../../settings/sendKey";
 import type {PersistedSettings} from "../../settings/types";
 import {
+    bindAgentChatScrollBody,
+    isAgentChatAtBottom,
+    scrollAgentChatToEnd,
+    scrollAgentChatToEndAfterLayoutIfSticky,
+    unbindAgentChatScrollBody,
+} from "../chat/chatScroll";
+import {
     bindAssistantConfirmNotify,
     clearAssistantCache,
     ensureMessageRow,
@@ -214,6 +221,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const elRail = root.querySelector("[data-rail]") as HTMLElement;
     const elMessages = root.querySelector("[data-messages]") as HTMLElement;
     const elChatBody = root.querySelector("[data-chat-body]") as HTMLElement;
+    bindAgentChatScrollBody(elChatBody);
     const elSessionList = root.querySelector("[data-session-list]") as HTMLElement;
     const elSessionTitle = root.querySelector("[data-session-title]") as HTMLElement;
     const elSessionSearch = root.querySelector("[data-session-search]") as HTMLInputElement;
@@ -644,6 +652,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 const tail = visibleMsgs[visibleMsgs.length - 1];
                 const streamingActive = isActiveSessionStreaming();
                 if (streamingActive && tail?.role === "assistant") {
+                    const stickyScroll = isAgentChatAtBottom();
                     const tailIdx = visibleMsgs.length - 1;
                     for (let i = 0; i < visibleMsgs.length; i++) {
                         const m = visibleMsgs[i];
@@ -682,11 +691,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                         }
                     }
                     syncAllAssistantActionsVisibility(visibleMsgs, rowByMessage);
-                    const dist =
-                        elChatBody.scrollHeight - elChatBody.scrollTop - elChatBody.clientHeight;
-                    if (dist < 120) {
-                        elChatBody.scrollTop = elChatBody.scrollHeight;
-                    }
+                    scrollAgentChatToEndAfterLayoutIfSticky(stickyScroll);
                     return;
                 }
                 void renderMessages();
@@ -765,14 +770,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         elMessages.querySelector(".agent-empty")?.remove();
     }
 
-    const scrollChatToEnd = () => {
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                elChatBody.scrollTop = elChatBody.scrollHeight;
-            });
-        });
-    };
-
     async function renderMessages(options?: {scrollToEnd?: boolean}): Promise<void> {
         if (destroyed) {
             return;
@@ -805,6 +802,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         const lute = luteRes.ok ? luteRes.lute : null;
 
         const visibleMsgs = msgs.filter((m) => m.role !== "tool");
+        const stickyScroll = isAgentChatAtBottom();
 
         while (elMessages.children.length > visibleMsgs.length) {
             elMessages.removeChild(elMessages.lastElementChild!);
@@ -858,12 +856,9 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
         if (seq === renderSeq) {
             if (options?.scrollToEnd) {
-                scrollChatToEnd();
+                scrollAgentChatToEnd();
             } else {
-                const dist = elChatBody.scrollHeight - elChatBody.scrollTop - elChatBody.clientHeight;
-                if (dist < 120) {
-                    scrollChatToEnd();
-                }
+                scrollAgentChatToEndAfterLayoutIfSticky(stickyScroll);
             }
         }
     }
@@ -1427,6 +1422,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
     const cleanup = () => {
         destroyed = true;
+        unbindAgentChatScrollBody();
         afterAbortAction = null;
         clearConfirmNotifications();
         clearConfirmNotifyState();
