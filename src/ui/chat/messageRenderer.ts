@@ -60,6 +60,7 @@ export function buildAssistantRow(): HTMLElement {
 <div class="agent-msg__confirms" hidden aria-live="polite"></div>
 <div class="agent-msg__actions">
   <button type="button" class="agent-msg__action" data-copy-md title="复制 Markdown">复制</button>
+  <button type="button" class="agent-msg__action" data-export-assistant title="导出对话" hidden>导出</button>
   <button type="button" class="agent-msg__action" data-regenerate-assistant title="重新生成" hidden>重新生成</button>
 </div>`;
     return row;
@@ -111,6 +112,10 @@ export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
     const regenBtn = row.querySelector("[data-regenerate-assistant]") as HTMLButtonElement | null;
     if (regenBtn) {
         regenBtn.hidden = false;
+    }
+    const exportBtn = row.querySelector("[data-export-assistant]") as HTMLButtonElement | null;
+    if (exportBtn) {
+        exportBtn.hidden = false;
     }
 }
 
@@ -258,6 +263,10 @@ export async function patchAssistantRow(
     const regenBtn = row.querySelector("[data-regenerate-assistant]") as HTMLButtonElement | null;
     if (regenBtn) {
         regenBtn.hidden = mdStreaming;
+    }
+    const exportBtn = row.querySelector("[data-export-assistant]") as HTMLButtonElement | null;
+    if (exportBtn) {
+        exportBtn.hidden = mdStreaming;
     }
 
     const needStreamFinalize = prev != null && prev.streamOpen && !mdStreaming;

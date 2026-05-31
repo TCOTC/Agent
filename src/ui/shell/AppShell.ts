@@ -147,8 +147,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
       </div>
       <div class="agent-header__actions fn__flex">
         <button type="button" class="agent-icon-btn" data-new-session title="新对话 (Ctrl+N)" aria-label="新对话">${agentIconHtml(AGENT_ICON_IDS.plus, { size: 14 })}</button>
-        <button type="button" class="agent-icon-btn" data-rail-history title="对话历史" aria-label="对话历史">${agentIconHtml(AGENT_ICON_IDS.history, { size: 14 })}</button>
-        <button type="button" class="agent-icon-btn" data-export-session title="导出对话" aria-label="导出对话">${agentIconHtml(AGENT_ICON_IDS.download, { size: 14 })}</button>
         <button type="button" class="agent-icon-btn" data-open-settings title="设置" aria-label="设置">${agentIconHtml(AGENT_ICON_IDS.settings, { size: 14 })}</button>
         <button type="button" class="agent-icon-btn" data-toggle-rail title="会话列表" aria-label="会话列表" aria-expanded="false">${agentIconHtml(AGENT_ICON_IDS.panelRight, { size: 14 })}</button>
       </div>
@@ -1162,6 +1160,23 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         doRegen();
     };
 
+    const exportFromAssistantRow = (row: HTMLElement) => {
+        const assistantMsg = findMessageForRow(row);
+        if (!assistantMsg || assistantMsg.role !== "assistant") {
+            return;
+        }
+        const s = getActive();
+        const idx = s.messages.indexOf(assistantMsg);
+        if (idx < 0) {
+            return;
+        }
+        const safeTitle = s.title.replace(/[/\\?%*:|"<>]/g, "_");
+        downloadTextFile(
+            `${safeTitle}.md`,
+            sessionToMarkdown(s, s.messages.slice(0, idx + 1)),
+        );
+    };
+
     function esc(s: string): string {
         return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
@@ -1186,10 +1201,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     root.querySelector("[data-toggle-rail-close]")?.addEventListener("click", () => {
         setRailExpanded(false);
     });
-    root.querySelector("[data-rail-history]")?.addEventListener("click", () => {
-        setRailExpanded(true, true);
-    });
-
     elMessages.addEventListener("mousedown", (e) => {
         if (e.button !== 0) {
             return;
@@ -1216,6 +1227,13 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             }
             return;
         }
+        if (target.closest("[data-export-assistant]")) {
+            const row = target.closest(".agent-msg--assistant") as HTMLElement | null;
+            if (row) {
+                exportFromAssistantRow(row);
+            }
+            return;
+        }
         const btn = target.closest("[data-user-resend]");
         if (!btn) {
             return;
@@ -1225,11 +1243,6 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             resendUserMessage(row);
         }
     });
-    root.querySelector("[data-export-session]")?.addEventListener("click", () => {
-        const s = getActive();
-        downloadTextFile(`${s.title.replace(/[/\\?%*:|"<>]/g, "_")}.md`, sessionToMarkdown(s));
-    });
-
     root.querySelector("[data-open-settings]")?.addEventListener("click", () => plugin.openSetting());
 
     elSessionSearch.addEventListener("input", (e) => {

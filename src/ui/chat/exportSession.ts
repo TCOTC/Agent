@@ -1,6 +1,8 @@
+import type {ChatMessage} from "../../agent/types";
 import type {ChatSession} from "../../session/types";
 
-export function sessionToMarkdown(session: ChatSession): string {
+export function sessionToMarkdown(session: ChatSession, messages?: ChatMessage[]): string {
+    const exportMessages = messages ?? session.messages;
     const lines: string[] = [
         `# ${session.title}`,
         "",
@@ -8,7 +10,7 @@ export function sessionToMarkdown(session: ChatSession): string {
         `- 模式：${session.mode}`,
         "",
     ];
-    for (const m of session.messages) {
+    for (const m of exportMessages) {
         if (m.role === "user") {
             lines.push("## 用户", "", m.content ?? "", "");
         } else if (m.role === "assistant") {
