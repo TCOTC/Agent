@@ -85,6 +85,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
     const rowByMessage = new WeakMap<ChatMessage, HTMLElement>();
     const rowToMessage = new Map<HTMLElement, ChatMessage>();
     const userEditorByMessage = new WeakMap<ChatMessage, ComposerEditorHandle>();
+    const userEditorDocSigByMessage = new WeakMap<ChatMessage, string>();
     const userMessageEditors = new Set<ComposerEditorHandle>();
     let userMessageDraftTimer: ReturnType<typeof setTimeout> | null = null;
     const kernel = createFetchSyncKernelExecutor();
@@ -632,41 +633,64 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             cancelAnimationFrame(prevRaf);
         }
         const raf = requestAnimationFrame(() => {
-            streamRafBySession.delete(streamSessionId);
-            if (streamSessionId !== sessions.activeId) {
-                persistSessions();
-                return;
-            }
-            const msgs = getActive().messages;
-            const visibleMsgs = msgs.filter((m) => m.role !== "tool");
-            const tail = visibleMsgs[visibleMsgs.length - 1];
-            const streamingActive = isActiveSessionStreaming();
-            const toolArgsComposing = tail?._streaming &&
-                !!tail.tool_calls?.length &&
-                !(tail._toolStatus && Object.keys(tail._toolStatus).length > 0);
-            if (
-                streamingActive &&
-                tail?.role === "assistant" &&
-                toolArgsComposing &&
-                !tail._mdStreaming
-            ) {
-                for (let i = 0; i < visibleMsgs.length; i++) {
-                    const m = visibleMsgs[i];
-                    if (m.role !== "assistant" || !m.tool_calls?.length) {
-                        continue;
+            void (async () => {
+                streamRafBySession.delete(streamSessionId);
+                if (streamSessionId !== sessions.activeId) {
+                    persistSessions();
+                    return;
+                }
+                const msgs = getActive().messages;
+                const visibleMsgs = msgs.filter((m) => m.role !== "tool");
+                const tail = visibleMsgs[visibleMsgs.length - 1];
+                const streamingActive = isActiveSessionStreaming();
+                if (streamingActive && tail?.role === "assistant") {
+                    const tailIdx = visibleMsgs.length - 1;
+                    for (let i = 0; i < visibleMsgs.length; i++) {
+                        const m = visibleMsgs[i];
+                        const slot = elMessages.children[i] as HTMLElement | undefined;
+                        ensureMessageRow(elMessages, m, rowByMessage, slot, rowToMessage);
+                        if (i < tailIdx && m.role === "user") {
+                            ensureUserMessageEditor(m, rowByMessage.get(m)!);
+                        }
                     }
-                    const slot = elMessages.children[i] as HTMLElement | undefined;
-                    const row = ensureMessageRow(elMessages, m, rowByMessage, slot, rowToMessage);
-                    patchAssistantToolCallsOnly(row, m);
+                    const tailSlot = elMessages.children[tailIdx] as HTMLElement | undefined;
+                    const tailRow = ensureMessageRow(
+                        elMessages,
+                        tail,
+                        rowByMessage,
+                        tailSlot,
+                        rowToMessage,
+                    );
+                    const toolArgsComposing =
+                        !!tail.tool_calls?.length &&
+                        !(tail._toolStatus && Object.keys(tail._toolStatus).length > 0);
+                    if (toolArgsComposing && !tail._mdStreaming) {
+                        patchAssistantToolCallsOnly(tailRow, tail);
+                    } else {
+                        const luteRes = getLuteResult();
+                        const showActions = isRoundTailAssistant(visibleMsgs, tailIdx);
+                        if (luteRes.ok) {
+                            try {
+                                await patchAssistantRow(tailRow, tail, luteRes.lute, isDestroyed, {
+                                    showActions,
+                                });
+                            } catch {
+                                patchAssistantRowPlain(tailRow, tail, {showActions});
+                            }
+                        } else {
+                            patchAssistantRowPlain(tailRow, tail, {showActions});
+                        }
+                    }
+                    syncAllAssistantActionsVisibility(visibleMsgs, rowByMessage);
+                    const dist =
+                        elChatBody.scrollHeight - elChatBody.scrollTop - elChatBody.clientHeight;
+                    if (dist < 120) {
+                        elChatBody.scrollTop = elChatBody.scrollHeight;
+                    }
+                    return;
                 }
-                syncAllAssistantActionsVisibility(visibleMsgs, rowByMessage);
-                const dist = elChatBody.scrollHeight - elChatBody.scrollTop - elChatBody.clientHeight;
-                if (dist < 120) {
-                    elChatBody.scrollTop = elChatBody.scrollHeight;
-                }
-                return;
-            }
-            void renderMessages();
+                void renderMessages();
+            })();
         });
         streamRafBySession.set(streamSessionId, raf);
     };
@@ -773,7 +797,9 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
 
         clearMessagesEmptyState();
-        rowToMessage.clear();
+        if (!isActiveSessionStreaming()) {
+            rowToMessage.clear();
+        }
 
         const luteRes = getLuteResult();
         const lute = luteRes.ok ? luteRes.lute : null;
@@ -800,8 +826,11 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
             const isStreamingTail =
                 streamingActive && i === visibleMsgs.length - 1 && m.role === "assistant";
 
-            if (streamingActive && !isStreamingTail && m.role === "assistant") {
-                patchAssistantTooling(row, m);
+            // 流式阶段仅刷新尾部 assistant；user 与历史 assistant 需保留已渲染内容
+            if (streamingActive && !isStreamingTail) {
+                if (m.role === "user") {
+                    ensureUserMessageEditor(m, row);
+                }
                 continue;
             }
 
@@ -924,6 +953,20 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         }
         ed.destroy();
         userMessageEditors.delete(ed);
+        userEditorByMessage.delete(m);
+        userEditorDocSigByMessage.delete(m);
+    };
+
+    const userMessageComposerDoc = (m: ChatMessage): JSONContent =>
+        m.composerDoc && (m.composerDoc as JSONContent).type === "doc"
+            ? (m.composerDoc as JSONContent)
+            : legacyUserContentToComposerDoc(m.content ?? "");
+
+    const userMessageComposerDocSig = (m: ChatMessage): string => {
+        if (m.composerDoc && (m.composerDoc as JSONContent).type === "doc") {
+            return `doc:${JSON.stringify(m.composerDoc)}`;
+        }
+        return `legacy:${m.content ?? ""}`;
     };
 
     const scheduleUserMessageDraftPersist = (m: ChatMessage) => {
@@ -941,6 +984,8 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
         if (!host) {
             return;
         }
+        const doc = userMessageComposerDoc(m);
+        const docSig = userMessageComposerDocSig(m);
         let editor = userEditorByMessage.get(m);
         if (!editor) {
             editor = mountComposerEditor({
@@ -952,16 +997,19 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 onSend: () => resendUserMessage(row),
                 onDraftChange: () => {
                     m.composerDoc = editor!.getDocumentJSON();
+                    userEditorDocSigByMessage.set(m, userMessageComposerDocSig(m));
                     scheduleUserMessageDraftPersist(m);
                 },
             });
             userEditorByMessage.set(m, editor);
             userMessageEditors.add(editor);
-            const doc =
-                m.composerDoc && (m.composerDoc as JSONContent).type === "doc"
-                    ? (m.composerDoc as JSONContent)
-                    : legacyUserContentToComposerDoc(m.content ?? "");
             editor.setDocumentJSON(doc);
+            userEditorDocSigByMessage.set(m, docSig);
+            return;
+        }
+        if (userEditorDocSigByMessage.get(m) !== docSig) {
+            editor.setDocumentJSON(doc);
+            userEditorDocSigByMessage.set(m, docSig);
         }
     };
 
@@ -1084,6 +1132,19 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
 
         const sess = getActive();
         const sendSessionId = sess.id;
+        const attachPendingUserComposerDoc = () => {
+            if (!pendingUserComposerDoc || attachedUserComposerDoc) {
+                return;
+            }
+            const msgs = getSessionById(sendSessionId)?.messages ?? sess.messages;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+                if (msgs[i].role === "user") {
+                    msgs[i].composerDoc = pendingUserComposerDoc;
+                    attachedUserComposerDoc = true;
+                    return;
+                }
+            }
+        };
         const prevRun = sessionRuns.get(sendSessionId);
         prevRun?.ctl.abort();
         prevRun?.abortAgent();
@@ -1122,16 +1183,7 @@ export function mountAppShell(plugin: Agent, root: HTMLElement): () => void {
                 onAudit: (e) => pushAudit(e, sendSessionId),
                 onStreamDelta: () => scheduleStreamRender(sendSessionId),
                 onMessagesChanged: () => {
-                    if (pendingUserComposerDoc && !attachedUserComposerDoc) {
-                        const msgs = getSessionById(sendSessionId)?.messages ?? sess.messages;
-                        for (let i = msgs.length - 1; i >= 0; i--) {
-                            if (msgs[i].role === "user") {
-                                msgs[i].composerDoc = pendingUserComposerDoc;
-                                break;
-                            }
-                        }
-                        attachedUserComposerDoc = true;
-                    }
+                    attachPendingUserComposerDoc();
                     scheduleStreamRender(sendSessionId);
                     if (sendSessionId === sessions.activeId) {
                     updateContextRing();

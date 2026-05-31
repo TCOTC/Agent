@@ -1,5 +1,6 @@
 import type {ChatMessage, OpenAiToolCallChunk} from "../../agent/types";
 import {scrollDiffToFirstChange} from "../../editor/diffEngine";
+import {ensureAssistantRowChromeOrder} from "./assistantRowChrome";
 import {readSessionIdFromMessagesEl, resolveInlineToolDiff} from "./inlineToolActions";
 import {compactKernelResponseText} from "../../tools/truncate";
 import {buildToolCallStreamPreview} from "./toolCallStreamPreview";
@@ -127,39 +128,69 @@ function isGenericProgressHint(text: string): boolean {
     return text === "执行中…" || text === "等待执行…";
 }
 
+type SummaryIconState = "spin" | "ok" | "fail";
+
+function resolveSummaryIconState(composing: boolean, status: string | undefined): SummaryIconState {
+    if (composing || status === "running" || status === undefined) {
+        return "spin";
+    }
+    if (status === "ok") {
+        return "ok";
+    }
+    return "fail";
+}
+
+function ensureSummaryIcon(summary: HTMLElement): HTMLElement {
+    let iconEl = summary.querySelector(".agent-tool-card__icon") as HTMLElement | null;
+    if (!iconEl) {
+        iconEl = document.createElement("span");
+        iconEl.className = "agent-tool-card__icon";
+        iconEl.dataset.iconState = "spin";
+        iconEl.dataset.iconV2 = "1";
+        const mark = document.createElement("span");
+        mark.className = "agent-tool-card__mark";
+        mark.hidden = true;
+        iconEl.appendChild(mark);
+        summary.insertBefore(iconEl, summary.firstChild);
+        return iconEl;
+    }
+    if (iconEl.dataset.iconV2 !== "1") {
+        iconEl.dataset.iconV2 = "1";
+        iconEl.classList.remove("agent-spinner");
+        iconEl.querySelector(".agent-tool-card__spinner")?.remove();
+        if (!iconEl.querySelector(".agent-tool-card__mark")) {
+            const mark = document.createElement("span");
+            mark.className = "agent-tool-card__mark";
+            mark.hidden = true;
+            iconEl.appendChild(mark);
+        }
+    }
+    return iconEl;
+}
+
+/** 流式参数阶段只改 data-icon-state；旋转由 CSS ::before 绘制，避免子节点重建导致动画重置 */
 function patchSummaryStatus(
     summary: HTMLElement,
     composing: boolean,
     status: string | undefined,
 ): void {
-    let iconEl = summary.querySelector(".agent-tool-card__icon") as HTMLElement | null;
-    if (!iconEl) {
-        iconEl = summary.querySelector(".agent-spinner") as HTMLElement | null;
-        if (iconEl) {
-            iconEl.classList.add("agent-tool-card__icon");
-        }
+    const nextState = resolveSummaryIconState(composing, status);
+    const existingIcon = summary.querySelector(".agent-tool-card__icon") as HTMLElement | null;
+    if (existingIcon?.dataset.iconState === nextState) {
+        return;
     }
-    if (!iconEl) {
-        iconEl = document.createElement("span");
-        iconEl.className = "agent-tool-card__icon agent-spinner";
-        summary.insertBefore(iconEl, summary.firstChild);
+    const iconEl = ensureSummaryIcon(summary);
+    const mark = iconEl.querySelector(".agent-tool-card__mark") as HTMLElement | null;
+    iconEl.dataset.iconState = nextState;
+    if (!mark) {
+        return;
     }
-    const spinning = composing || status === "running" || !status;
-    if (spinning) {
-        if (!iconEl.classList.contains("agent-spinner")) {
-            iconEl.className = "agent-tool-card__icon agent-spinner";
-            iconEl.textContent = "";
-        }
-    } else if (status === "ok") {
-        iconEl.className = "agent-tool-card__icon";
-        if (iconEl.textContent !== "✓") {
-            iconEl.textContent = "✓";
-        }
+    if (nextState === "spin") {
+        mark.hidden = true;
+        mark.textContent = "";
     } else {
-        iconEl.className = "agent-tool-card__icon";
-        if (iconEl.textContent !== "✗") {
-            iconEl.textContent = "✗";
-        }
+        mark.hidden = false;
+        mark.textContent = nextState === "ok" ? "✓" : "✗";
     }
 
     let nameEl = summary.querySelector(".agent-tool-card__name") as HTMLElement | null;
@@ -168,6 +199,14 @@ function patchSummaryStatus(
         nameEl.className = "agent-tool-card__name";
         summary.appendChild(nameEl);
     }
+}
+
+function pendingToolCardDomId(index: number): string {
+    return `tc-${index}`;
+}
+
+function findToolCardByDomId(host: HTMLElement, domId: string): HTMLDetailsElement | null {
+    return host.querySelector(`[data-tool-call-id="${CSS.escape(domId)}"]`) as HTMLDetailsElement | null;
 }
 
 function patchStatusHint(body: HTMLElement, text: string | null): void {
@@ -308,12 +347,14 @@ function patchPreviewFields(
 }
 
 function patchDiffBlock(
-    body: HTMLElement,
+    host: HTMLElement,
     sessionId: string,
     toolCallId: string,
     diff: NonNullable<ChatMessage["_toolDiff"]>[string],
 ): void {
-    let block = body.querySelector(".agent-tool-card__diff") as HTMLElement | null;
+    let block = host.querySelector(
+        `[data-tool-call-id="${CSS.escape(toolCallId)}"]`,
+    ) as HTMLElement | null;
     if (diff.status !== "pending") {
         block?.remove();
         return;
@@ -321,6 +362,7 @@ function patchDiffBlock(
     if (!block) {
         block = document.createElement("div");
         block.className = "agent-tool-card__diff";
+        block.dataset.toolCallId = toolCallId;
         block.innerHTML = `
 <div class="agent-tool-card__diff-head"></div>
 <div class="agent-tool-card__diff-body agent-diff"></div>
@@ -333,7 +375,7 @@ function patchDiffBlock(
         const reject = block.querySelector("[data-reject]") as HTMLButtonElement;
         approve.addEventListener("click", () => resolveInlineToolDiff(sessionId, toolCallId, true));
         reject.addEventListener("click", () => resolveInlineToolDiff(sessionId, toolCallId, false));
-        body.appendChild(block);
+        host.appendChild(block);
     }
     const head = block.querySelector(".agent-tool-card__diff-head")!;
     if (head.textContent !== diff.title) {
@@ -386,8 +428,11 @@ function patchToolCard(
     const awaitingDiff = diff?.status === "pending";
 
     const summary = card.querySelector("summary");
+    const summaryComposing = confirm?.status === "pending" || diff?.status === "pending" ? false : composing;
+    const summaryStatus =
+        confirm?.status === "pending" || diff?.status === "pending" ? "running" : status;
     if (summary) {
-        patchSummaryStatus(summary, composing, status);
+        patchSummaryStatus(summary, summaryComposing, summaryStatus);
         const nameEl = summary.querySelector(".agent-tool-card__name") as HTMLElement | null;
         if (nameEl && nameEl.textContent !== tc.function.name) {
             nameEl.textContent = tc.function.name;
@@ -397,14 +442,8 @@ function patchToolCard(
     const body = ensureCardBody(card);
 
     if (confirm?.status === "pending") {
-        if (summary) {
-            patchSummaryStatus(summary, false, "running");
-        }
         patchStatusHint(body, "等待下方「待确认」区域");
     } else if (diff?.status === "pending") {
-        if (summary) {
-            patchSummaryStatus(summary, false, "running");
-        }
         patchStatusHint(body, "请查看下方 diff 并选择是否应用");
     } else if (confirm?.status === "rejected") {
         patchStatusHint(body, "已拒绝执行");
@@ -418,13 +457,45 @@ function patchToolCard(
 
     body.querySelector(".agent-tool-card__confirm")?.remove();
 
-    if (diff) {
-        patchDiffBlock(body, sessionId, tc.id, diff);
-    } else {
-        body.querySelector(".agent-tool-card__diff")?.remove();
-    }
-
     patchResultBlock(body, tc.function.name, result);
+}
+
+function ensureAssistantDiffsHost(row: HTMLElement): HTMLElement {
+    let host = row.querySelector(".agent-msg__diffs") as HTMLElement | null;
+    if (!host) {
+        host = document.createElement("div");
+        host.className = "agent-msg__diffs";
+        row.appendChild(host);
+        ensureAssistantRowChromeOrder(row);
+    }
+    return host;
+}
+
+function renderAssistantDiffs(
+    row: HTMLElement,
+    m: ChatMessage,
+    sessionId: string,
+): void {
+    const host = ensureAssistantDiffsHost(row);
+    const seen = new Set<string>();
+    for (const tc of m.tool_calls ?? []) {
+        const id = tc.id;
+        if (!id) {
+            continue;
+        }
+        const diff = m._toolDiff?.[id];
+        if (diff?.status === "pending") {
+            seen.add(id);
+            patchDiffBlock(host, sessionId, id, diff);
+        }
+    }
+    for (const old of host.querySelectorAll(".agent-tool-card__diff")) {
+        const id = (old as HTMLElement).dataset.toolCallId;
+        if (id && !seen.has(id)) {
+            old.remove();
+        }
+    }
+    host.hidden = host.childElementCount === 0;
 }
 
 function createToolCard(toolName: string, toolCallId: string): HTMLDetailsElement {
@@ -432,7 +503,7 @@ function createToolCard(toolName: string, toolCallId: string): HTMLDetailsElemen
     card.className = "agent-tool-card";
     card.dataset.toolCallId = toolCallId;
     card.innerHTML =
-        `<summary><span class="agent-tool-card__icon agent-spinner"></span> <span class="agent-tool-card__name">${escapeHtml(toolName)}</span></summary>`;
+        `<summary><span class="agent-tool-card__icon" data-icon-state="spin"><span class="agent-tool-card__mark" hidden></span></span> <span class="agent-tool-card__name">${escapeHtml(toolName)}</span></summary>`;
     return card;
 }
 
@@ -445,18 +516,27 @@ export interface RenderToolCallsOptions {
 
 /** 增量更新工具卡片 DOM，避免 replaceChildren 导致正文区连带重绘与滚动丢失 */
 export function renderAssistantToolCalls(
-    host: HTMLElement,
+    row: HTMLElement,
     m: ChatMessage,
     options: RenderToolCallsOptions = {},
 ): void {
+    const host = row.querySelector(".agent-msg__tools") as HTMLElement | null;
+    if (!host) {
+        return;
+    }
     if (!m.tool_calls?.length) {
         host.replaceChildren();
         host.hidden = true;
+        const diffsHost = row.querySelector(".agent-msg__diffs") as HTMLElement | null;
+        diffsHost?.replaceChildren();
+        if (diffsHost) {
+            diffsHost.hidden = true;
+        }
         return;
     }
     host.hidden = false;
 
-    const sessionId = options.sessionId ?? readSessionIdFromMessagesEl(host);
+    const sessionId = options.sessionId ?? readSessionIdFromMessagesEl(row);
     if (!sessionId) {
         return;
     }
@@ -464,12 +544,21 @@ export function renderAssistantToolCalls(
     const llmStreaming = options.llmStreaming === true;
     const seen = new Set<string>();
 
-    for (const tc of m.tool_calls) {
-        const id = tc.id || `${tc.function.name}:${seen.size}`;
-        seen.add(id);
-        let card = host.querySelector(`[data-tool-call-id="${CSS.escape(id)}"]`) as HTMLDetailsElement | null;
+    for (let i = 0; i < m.tool_calls.length; i++) {
+        const tc = m.tool_calls[i]!;
+        const pendingId = pendingToolCardDomId(i);
+        const domId = tc.id || pendingId;
+        seen.add(domId);
+
+        let card = findToolCardByDomId(host, domId);
+        if (!card && tc.id) {
+            card = findToolCardByDomId(host, pendingId);
+            if (card) {
+                card.dataset.toolCallId = tc.id;
+            }
+        }
         if (!card) {
-            card = createToolCard(tc.function.name, id);
+            card = createToolCard(tc.function.name, domId);
             host.appendChild(card);
         }
         patchToolCard(card, tc, m, isToolCallArgsComposing(tc, llmStreaming, m), sessionId);
@@ -481,4 +570,6 @@ export function renderAssistantToolCalls(
             old.remove();
         }
     }
+
+    renderAssistantDiffs(row, m, sessionId);
 }

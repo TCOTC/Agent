@@ -6,6 +6,9 @@ export const BLOCK_MENTION_WIRE_RE = /@\[((?:[^\]\\]|\\.)*)\]\(siyuan:\/\/blocks
 /** 块引用 LLM Markdown（无 leading `@`）：`[label](siyuan://blocks/id)` */
 export const BLOCK_MENTION_LLM_RE = /\[((?:[^\]\\]|\\.)*)\]\(siyuan:\/\/blocks\/([^)]+)\)/g;
 
+/** Composer 内联 / 历史正文中的 wire 与 LLM 块引用 */
+export const BLOCK_MENTION_INLINE_RE = /(?:@)?\[((?:[^\]\\]|\\.)*)\]\(siyuan:\/\/blocks\/([^)]+)\)/g;
+
 export function escapeBlockMentionLabel(label: string): string {
     return label.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
 }
@@ -37,7 +40,7 @@ export function userContentToLlmMarkdown(content: string): string {
 function parseInlineLineToNodes(line: string): JSONContent[] {
     const nodes: JSONContent[] = [];
     let last = 0;
-    const re = new RegExp(BLOCK_MENTION_WIRE_RE.source, "g");
+    const re = new RegExp(BLOCK_MENTION_INLINE_RE.source, "g");
     let m: RegExpExecArray | null;
     while ((m = re.exec(line)) !== null) {
         if (m.index > last) {

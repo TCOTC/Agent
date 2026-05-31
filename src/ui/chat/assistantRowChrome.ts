@@ -3,16 +3,44 @@
 const detachedConfirmsByRow = new WeakMap<HTMLElement, HTMLElement>();
 const detachedActionsByRow = new WeakMap<HTMLElement, HTMLElement>();
 
+const ASSISTANT_CHROME_SELECTORS = [
+    ".agent-msg__think",
+    ".agent-msg__body",
+    ".agent-msg__tools",
+    ".agent-msg__diffs",
+    ".agent-msg__confirms",
+    ".agent-msg__actions",
+] as const;
+
+/** 仅在子节点顺序错乱时重排，避免流式阶段每帧移动 body / tools 触发 Mutation */
 export function ensureAssistantRowChromeOrder(row: HTMLElement): void {
-    const nodes = [
-        row.querySelector(".agent-msg__think"),
-        row.querySelector(".agent-msg__body"),
-        row.querySelector(".agent-msg__tools"),
-        row.querySelector(".agent-msg__confirms"),
-        row.querySelector(".agent-msg__actions"),
-    ].filter((n): n is Element => n != null);
-    for (const el of nodes) {
-        row.appendChild(el);
+    const nodes: Element[] = [];
+    for (const sel of ASSISTANT_CHROME_SELECTORS) {
+        const n = row.querySelector(sel);
+        if (n) {
+            nodes.push(n);
+        }
+    }
+    if (nodes.length < 2) {
+        return;
+    }
+    const indexByChild = new Map<Element, number>();
+    for (let i = 0; i < row.children.length; i++) {
+        indexByChild.set(row.children[i]!, i);
+    }
+    let lastIdx = -1;
+    for (const n of nodes) {
+        const idx = indexByChild.get(n);
+        if (idx === undefined) {
+            continue;
+        }
+        if (idx < lastIdx) {
+            for (const el of nodes) {
+                row.appendChild(el);
+            }
+            return;
+        }
+        lastIdx = idx;
     }
 }
 

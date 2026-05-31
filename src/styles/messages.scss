@@ -395,8 +395,11 @@
   margin-top: 8px;
 }
 
-.agent-spinner,
-.agent-tool-card__icon.agent-spinner {
+.agent-msg__diffs:not(:empty) {
+  margin-top: 10px;
+}
+
+.agent-spinner {
   display: inline-block;
   width: 10px;
   height: 10px;
@@ -408,9 +411,40 @@
   flex-shrink: 0;
 }
 
-.agent-tool-card__icon:not(.agent-spinner) {
+.agent-tool-card__icon {
+  position: relative;
   display: inline-block;
-  width: 1em;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  align-self: center;
+  vertical-align: -1px;
+  box-sizing: border-box;
+}
+
+.agent-tool-card__icon[data-icon-state="spin"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 2px solid var(--b3-border-color);
+  border-top-color: var(--b3-theme-primary);
+  border-radius: 50%;
+  animation: agent-spin 0.7s linear infinite;
+}
+
+.agent-tool-card__mark {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 10px;
   text-align: center;
-  flex-shrink: 0;
+}
+
+.agent-tool-card__icon[data-icon-state="ok"] .agent-tool-card__mark,
+.agent-tool-card__icon[data-icon-state="fail"] .agent-tool-card__mark {
+  display: flex;
 }

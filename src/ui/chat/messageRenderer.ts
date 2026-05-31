@@ -107,7 +107,8 @@ export function buildAssistantRow(): HTMLElement {
   <div class="agent-msg__reasoning b3-typography b3-typography--default"></div>
 </details>
 <div class="agent-msg__body b3-typography b3-typography--default"></div>
-<div class="agent-msg__tools"></div>`;
+<div class="agent-msg__tools"></div>
+<div class="agent-msg__diffs"></div>`;
     return row;
 }
 
@@ -212,16 +213,21 @@ export function syncAssistantActionsVisibility(
     showActions: boolean,
 ): void {
     const streaming = m._mdStreaming === true || m._streaming === true;
-    const visible = showActions && !streaming;
-
-    if (!visible) {
+    const wantVisible = showActions && !streaming;
+    const actions = row.querySelector(".agent-msg__actions");
+    if (!wantVisible) {
+        if (!actions) {
+            return;
+        }
         detachAssistantActions(row);
         ensureAssistantRowChromeOrder(row);
         return;
     }
-
-    const actions = mountAssistantActions(row);
-    bindCopyAction(actions, m);
+    if (actions) {
+        return;
+    }
+    const mounted = mountAssistantActions(row);
+    bindCopyAction(mounted, m);
     ensureAssistantRowChromeOrder(row);
 }
 
@@ -252,7 +258,7 @@ export function patchAssistantTooling(
     const sessionId = options.sessionId ?? readSessionIdFromMessagesEl(row);
     const onNotify = options.onConfirmNotify ?? confirmNotifyHandler;
     renderAssistantConfirmBanner(row, m, {sessionId, onNotify});
-    renderAssistantToolCalls(row.querySelector(".agent-msg__tools") as HTMLElement, m, {
+    renderAssistantToolCalls(row, m, {
         sessionId,
         llmStreaming: m._streaming === true,
     });
@@ -325,17 +331,19 @@ export async function patchAssistantRow(
     const confirmSig = toolConfirmSig(m);
     const diffSig = toolDiffSig(m);
     const prev = (row as unknown as Record<string, Patch | undefined>)[PATCH];
-    const bodyUnchanged = prev != null && prev.content === contentRaw && prev.reasoning === reasoningRaw;
+    const toolingChanged =
+        !prev ||
+        prev.toolsSig !== toolsSig ||
+        prev.statusSig !== statusSig ||
+        prev.resultsSig !== resultsSig ||
+        prev.hintSig !== hintSig ||
+        prev.confirmSig !== confirmSig ||
+        prev.diffSig !== diffSig;
     if (
         prev &&
         prev.content === contentRaw &&
         prev.reasoning === reasoningRaw &&
-        prev.toolsSig === toolsSig &&
-        prev.statusSig === statusSig &&
-        prev.resultsSig === resultsSig &&
-        prev.hintSig === hintSig &&
-        prev.confirmSig === confirmSig &&
-        prev.diffSig === diffSig &&
+        !toolingChanged &&
         prev.streamOpen === mdStreaming &&
         prev.thinkingMdOpen === thinkingMdOpen
     ) {
@@ -366,7 +374,9 @@ export async function patchAssistantRow(
         });
     }
 
-    patchAssistantTooling(row, m);
+    if (toolingChanged) {
+        patchAssistantTooling(row, m, options);
+    }
     syncAssistantActionsVisibility(row, m, options.showActions === true);
 
     const needStreamFinalize = prev != null && prev.streamOpen && !mdStreaming;
