@@ -4,8 +4,7 @@ export const MAX_TOOL_OUTPUT_CHARS = 14_000;
 /** DeepSeek API 根地址（可在设置中覆盖，默认与此一致） */
 export const DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com";
 
-/** 活动日志与 token 统计持久化键 */
-export const STORAGE_KEY_ACTIVITY = "activity.jsonl";
+/** token 统计与会话持久化键 */
 export const STORAGE_KEY_TOKEN_STATS = "token-stats.json";
 export const STORAGE_KEY_SESSIONS = "sessions.json";
 

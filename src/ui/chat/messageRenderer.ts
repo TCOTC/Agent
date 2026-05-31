@@ -60,6 +60,7 @@ export function buildAssistantRow(): HTMLElement {
 <div class="agent-msg__confirms" hidden aria-live="polite"></div>
 <div class="agent-msg__actions">
   <button type="button" class="agent-msg__action" data-copy-md title="复制 Markdown">复制</button>
+  <button type="button" class="agent-msg__action" data-regenerate-assistant title="重新生成" hidden>重新生成</button>
 </div>`;
     return row;
 }
@@ -107,6 +108,10 @@ export function patchAssistantRowPlain(row: HTMLElement, m: ChatMessage): void {
         bodyEl.textContent = m.content ?? "";
     }
     patchAssistantTooling(row, m);
+    const regenBtn = row.querySelector("[data-regenerate-assistant]") as HTMLButtonElement | null;
+    if (regenBtn) {
+        regenBtn.hidden = false;
+    }
 }
 
 export interface PatchAssistantToolingOptions {
@@ -250,6 +255,11 @@ export async function patchAssistantRow(
         });
     }
 
+    const regenBtn = row.querySelector("[data-regenerate-assistant]") as HTMLButtonElement | null;
+    if (regenBtn) {
+        regenBtn.hidden = mdStreaming;
+    }
+
     const needStreamFinalize = prev != null && prev.streamOpen && !mdStreaming;
     const thinkingEnd = prev != null && prev.thinkingMdOpen && !thinkingMdOpen;
     const reasoningChanged = !prev || prev.reasoning !== reasoningRaw;
@@ -290,6 +300,7 @@ export function ensureMessageRow(
     m: ChatMessage,
     rowByMessage: WeakMap<ChatMessage, HTMLElement>,
     slot: HTMLElement | undefined,
+    rowToMessage?: Map<HTMLElement, ChatMessage>,
 ): HTMLElement {
     let row = rowByMessage.get(m);
     if (!row) {
@@ -307,11 +318,13 @@ export function ensureMessageRow(
     }
     if (slot !== row) {
         if (slot) {
+            rowToMessage?.delete(slot);
             elMessages.replaceChild(row, slot);
         } else if (!row.isConnected) {
             elMessages.appendChild(row);
         }
     }
+    rowToMessage?.set(row, m);
     return row;
 }
 
